@@ -19,6 +19,7 @@
             border-radius: 10px;
             z-index: 1000;
             box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            width: 300px;
         }
         button {
             background-color: #ff0033;
@@ -32,7 +33,15 @@
             width: 100%;
         }
         button:hover { background-color: #cc0029; }
+        .live-btn { background-color: #007bff; }
+        .live-btn:hover { background-color: #0056b3; }
+        
         #status { margin-top: 10px; font-size: 14px; color: #aaa; }
+        .tab-bar { display: flex; margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 10px;}
+        .tab { flex: 1; text-align: center; cursor: pointer; color: #888; font-weight: bold;}
+        .tab.active { color: white; }
+        .panel-section { display: none; }
+        .panel-section.active { display: block; }
     </style>
 </head>
 <body>
@@ -41,9 +50,24 @@
 
     <div id="control-panel">
         <h3>🛰️ AI Sat-Scanner</h3>
-        <input type="file" id="imageInput" accept=".tif,.tiff">
-        <button id="analyzeBtn">Run AI Analysis</button>
-        <div id="status">Waiting for image...</div>
+        
+        <div class="tab-bar">
+            <div class="tab active" onclick="switchTab('live')">📡 Live Scan</div>
+            <div class="tab" onclick="switchTab('upload')">📁 Upload TIF</div>
+        </div>
+        
+        <div id="live-section" class="panel-section active">
+            <p style="font-size: 13px; color: #bbb;">Click anywhere on the map to set a target area (10km x 10km), then scan.</p>
+            <div id="target-coords" style="font-size: 12px; margin-bottom: 10px; color: #00ffcc;">Target: Not Selected</div>
+            <button id="liveScanBtn" class="live-btn">Run Live Satellite Scan</button>
+        </div>
+
+        <div id="upload-section" class="panel-section">
+            <input type="file" id="imageInput" accept=".tif,.tiff" style="width: 100%; margin-bottom: 10px;">
+            <button id="analyzeBtn">Run Local File Analysis</button>
+        </div>
+
+        <div id="status">Waiting for input...</div>
     </div>
 
     <script>
@@ -54,74 +78,121 @@
             attribution: 'Tiles &copy; Esri'
         }).addTo(map);
 
-        // Custom Icon for the "Small Logo"
-        // Upgraded Professional Icon
-        var floodIcon = L.icon({
-            iconUrl: 'https://cdn0.iconfinder.com/data/icons/small-n-flat/24/678136-shield-warning-512.png', 
-            iconSize: [45, 45], // Slightly bigger so it's clear
-            iconAnchor: [22, 45],
-            popupAnchor: [0, -40]
-        });
+        // Removed floodIcon as per user request
 
         var currentMarkers = L.layerGroup().addTo(map);
+        
+        // Target Marker Logic
+        var targetMarker = null;
+        var selectedLat = null;
+        var selectedLng = null;
+        
+        map.on('click', function(e) {
+            if(document.getElementById('live-section').classList.contains('active')) {
+                selectedLat = e.latlng.lat;
+                selectedLng = e.latlng.lng;
+                
+                if(targetMarker) {
+                    map.removeLayer(targetMarker);
+                }
+                targetMarker = L.circleMarker(e.latlng, {
+                    color: '#00ffcc',
+                    radius: 8,
+                    weight: 3
+                }).addTo(map);
+                
+                document.getElementById('target-coords').innerText = `Target: ${selectedLat.toFixed(4)}, ${selectedLng.toFixed(4)}`;
+            }
+        });
 
-        // 2. The Logic: Upload -> AI -> Clickable Pin
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.panel-section').forEach(p => p.classList.remove('active'));
+            
+            if(tabId === 'live') {
+                document.querySelectorAll('.tab')[0].classList.add('active');
+                document.getElementById('live-section').classList.add('active');
+            } else {
+                document.querySelectorAll('.tab')[1].classList.add('active');
+                document.getElementById('upload-section').classList.add('active');
+            }
+        }
+
+        // Shared function to process GeoJSON response
+        function renderAIResponse(geojsonData, statusText) {
+            if (geojsonData.error) {
+                statusText.innerHTML = "❌ " + geojsonData.error;
+                return;
+            }
+        
+            if (!geojsonData.features || geojsonData.features.length === 0) {
+                statusText.innerHTML = "✅ Area Clear: No Floods Detected.";
+                return;
+            }
+
+            currentMarkers.clearLayers();
+
+            // Render precise flood polygons
+            const geoJsonLayer = L.geoJSON(geojsonData, {
+                style: function() {
+                    return { color: '#ff4d4d', weight: 2, fillOpacity: 0.5 };
+                }
+            }).addTo(currentMarkers);
+
+            // Fly to the bounds of all detected polygons
+            map.flyToBounds(geoJsonLayer.getBounds(), { padding: [50, 50], maxZoom: 14 });
+
+            statusText.innerHTML = "✅ AI Detection Complete!";
+        }
+
+        // 2. The Logic: Live Scan
+        document.getElementById('liveScanBtn').addEventListener('click', async () => {
+            const statusText = document.getElementById('status');
+            if (selectedLat === null) return alert("Please click on the map to select a target area first!");
+
+            statusText.innerHTML = "⏳ Searching Microsoft Planetary Computer for live Sentinel-1 data...";
+            
+            // Create a roughly 10km x 10km bounding box around the click
+            // 1 degree lat is ~111km. 10km is ~0.09 degrees. Half is 0.045
+            const offsetLat = 0.045;
+            // Longitude distance varies by latitude. offset = 10km / (111.32 * cos(lat))
+            const offsetLng = 10 / (111.32 * Math.cos(selectedLat * Math.PI / 180)) / 2;
+            
+            const bbox = [
+                selectedLng - offsetLng, // minx (west)
+                selectedLat - offsetLat, // miny (south)
+                selectedLng + offsetLng, // maxx (east)
+                selectedLat + offsetLat  // maxy (north)
+            ];
+
+            try {
+                const response = await fetch('/api/live-analyze', { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bbox: bbox }) 
+                });
+                const geojsonData = await response.json();
+                renderAIResponse(geojsonData, statusText);
+            } catch (err) {
+                statusText.innerHTML = "❌ Error connecting to backend.";
+            }
+        });
+
+        // 3. The Logic: Upload File
         document.getElementById('analyzeBtn').addEventListener('click', async () => {
             const fileInput = document.getElementById('imageInput');
             const statusText = document.getElementById('status');
 
             if (fileInput.files.length === 0) return alert("Select an image!");
 
-            statusText.innerHTML = "⏳ Processing AI Analysis...";
+            statusText.innerHTML = "⏳ Processing Local AI Analysis...";
             const formData = new FormData();
             formData.append('satelliteImage', fileInput.files[0]);
 
             try {
                 const response = await fetch('/api/analyze-satellite', { method: 'POST', body: formData });
                 const geojsonData = await response.json();
-
-                if (geojsonData.features.length === 0) {
-                    statusText.innerHTML = "✅ Area Clear: No Floods.";
-                    return;
-                }
-
-                // Clear old pins
-                currentMarkers.clearLayers();
-
-                // 3. Loop through detections and drop pins
-                geojsonData.features.forEach(feature => {
-                    // Calculate the center point of the flood shape
-                    const coords = feature.geometry.coordinates[0];
-                    let latSum = 0, lngSum = 0;
-                    coords.forEach(c => { lngSum += c[0]; latSum += c[1]; });
-                    
-                    const center = [latSum / coords.length, lngSum / coords.length];
-
-                    // 4. Drop the "Small Logo" (The Pin)
-                    const marker = L.marker(center, { icon: floodIcon }).addTo(currentMarkers);
-
-                    // 5. Add the Popup with Details
-                    marker.bindPopup(`
-                        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 10px; min-width: 200px;">
-                            <div style="background: #ff4d4d; color: white; padding: 5px 10px; border-radius: 5px 5px 0 0; font-weight: bold; text-align: center;">
-                                🚨 LIVE THREAT DETECTED
-                            </div>
-                            <div style="padding: 10px; border: 1px solid #ddd; border-top: none; background: #fff; color: #333;">
-                                <p style="margin: 5px 0;"><b>Source:</b> Sentinel-1 Radar</p>
-                                <p style="margin: 5px 0;"><b>Confidence:</b> 94.2%</p>
-                                <p style="margin: 5px 0;"><b>Coordinates:</b> <span style="color: #ff4d4d;">${center[0].toFixed(4)}, ${center[1].toFixed(4)}</span></p>
-                                <button style="width: 100%; background: #333; color: white; border: none; padding: 8px; margin-top: 10px; border-radius: 4px; cursor: pointer;">
-                                    View Detailed Analytics
-                                </button>
-                            </div>
-                        </div>
-                    `);
-
-                    // Fly to the new detection
-                    map.flyTo(center, 14);
-                });
-
-                statusText.innerHTML = "✅ AI Detection Complete!";
+                renderAIResponse(geojsonData, statusText);
             } catch (err) {
                 statusText.innerHTML = "❌ Error in AI pipeline.";
             }

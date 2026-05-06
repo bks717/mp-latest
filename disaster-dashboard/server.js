@@ -40,6 +40,22 @@ app.post('/api/analyze-satellite', upload.single('satelliteImage'), async (req, 
     }
 });
 
+// The Live Bridge Endpoint: Catches bbox from frontend -> Sends to Python AI -> Returns Map Data
+app.post('/api/live-analyze', async (req, res) => {
+    try {
+        console.log("🛰️ Node Server received live scan request. Forwarding to AI Engine...", req.body);
+
+        const aiResponse = await axios.post('http://127.0.0.1:8000/predict-live', req.body);
+
+        console.log("✅ AI Engine replied with live scan data! Sending back to frontend.");
+        res.json(aiResponse.data);
+
+    } catch (error) {
+        console.error("🚨 Error communicating with AI Engine for live scan:", error.message);
+        res.status(500).json({ error: "Failed to run live scan through AI." });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`🌍 Main Dashboard Server running on http://localhost:${PORT}`);
 });
