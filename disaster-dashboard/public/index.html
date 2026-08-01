@@ -1,115 +1,239 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Live Disaster AI Dashboard</title>
+    <title>Disaster Management AI Dashboard</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <style> 
-        body { margin: 0; padding: 0; font-family: sans-serif; }
-        #disaster-map { height: 100vh; width: 100vw; z-index: 1; } 
-        
-        /* Our new sleek control panel */
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
+        #disaster-map { height: 100vh; width: 100vw; z-index: 1; }
+
+        /* ── Control Panel ── */
         #control-panel {
             position: absolute;
             top: 20px;
             right: 20px;
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(10, 10, 20, 0.92);
             color: white;
             padding: 20px;
-            border-radius: 10px;
+            border-radius: 12px;
             z-index: 1000;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-            width: 300px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            width: 320px;
+            border: 1px solid rgba(255,255,255,0.08);
         }
+
+        #control-panel h3 {
+            margin: 0 0 14px 0;
+            font-size: 16px;
+            letter-spacing: 0.5px;
+            color: #fff;
+        }
+
+        .tab-bar {
+            display: flex;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
+        }
+        .tab {
+            flex: 1;
+            text-align: center;
+            cursor: pointer;
+            color: #666;
+            font-weight: bold;
+            font-size: 13px;
+            padding: 4px 0;
+            border-radius: 4px;
+            transition: color 0.2s;
+        }
+        .tab.active { color: #00ffcc; }
+        .tab:hover { color: #aaa; }
+
+        .panel-section { display: none; }
+        .panel-section.active { display: block; }
+
+        .hint-text { font-size: 12px; color: #888; margin-bottom: 10px; line-height: 1.5; }
+
+        #target-coords {
+            font-size: 12px;
+            margin-bottom: 10px;
+            color: #00ffcc;
+            font-family: monospace;
+        }
+
         button {
-            background-color: #ff0033;
             color: white;
             border: none;
             padding: 10px 15px;
-            margin-top: 10px;
+            margin-top: 8px;
             cursor: pointer;
-            border-radius: 5px;
+            border-radius: 6px;
             font-weight: bold;
             width: 100%;
+            font-size: 13px;
+            transition: background 0.2s;
         }
-        button:hover { background-color: #cc0029; }
-        .live-btn { background-color: #007bff; }
-        .live-btn:hover { background-color: #0056b3; }
-        
-        #status { margin-top: 10px; font-size: 14px; color: #aaa; }
-        .tab-bar { display: flex; margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 10px;}
-        .tab { flex: 1; text-align: center; cursor: pointer; color: #888; font-weight: bold;}
-        .tab.active { color: white; }
-        .panel-section { display: none; }
-        .panel-section.active { display: block; }
+        .btn-scan  { background-color: #0066ff; }
+        .btn-scan:hover  { background-color: #0052cc; }
+        .btn-upload { background-color: #cc0033; }
+        .btn-upload:hover { background-color: #a30029; }
+        button:disabled { background-color: #444; cursor: not-allowed; }
+
+        input[type="file"] {
+            width: 100%;
+            margin-bottom: 6px;
+            font-size: 12px;
+            color: #ccc;
+        }
+
+        #status {
+            margin-top: 12px;
+            font-size: 13px;
+            color: #aaa;
+            min-height: 20px;
+            line-height: 1.5;
+        }
+
+        /* ── Summary Panel ── */
+        #summary-panel {
+            margin-top: 14px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            padding: 12px;
+            display: none;
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+        #summary-panel h4 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            color: #ccc;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            margin-bottom: 6px;
+            color: #bbb;
+        }
+        .summary-row span:last-child { font-weight: bold; color: #fff; }
+
+        .severity-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .sev-none     { background: #333; color: #aaa; }
+        .sev-low      { background: #1a5c1a; color: #6dff6d; }
+        .sev-medium   { background: #5c4a00; color: #ffd24d; }
+        .sev-high     { background: #5c1a00; color: #ff6d3a; }
+        .sev-critical { background: #5c0011; color: #ff3a5c; }
+
+        .danger-breakdown {
+            margin-top: 8px;
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .danger-chip {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 600;
+        }
+        .chip-low      { background: #1a5c1a; color: #6dff6d; }
+        .chip-medium   { background: #5c4a00; color: #ffd24d; }
+        .chip-high     { background: #5c1a00; color: #ff6d3a; }
+        .chip-critical { background: #5c0011; color: #ff3a5c; }
     </style>
 </head>
 <body>
-    
+
     <div id="disaster-map"></div>
 
     <div id="control-panel">
-        <h3>🛰️ AI Sat-Scanner</h3>
-        
+        <h3>🛰️ Disaster Management AI</h3>
+
         <div class="tab-bar">
             <div class="tab active" onclick="switchTab('live')">📡 Live Scan</div>
             <div class="tab" onclick="switchTab('upload')">📁 Upload TIF</div>
         </div>
-        
+
+        <!-- Live Scan Section -->
         <div id="live-section" class="panel-section active">
-            <p style="font-size: 13px; color: #bbb;">Click anywhere on the map to set a target area (10km x 10km), then scan.</p>
-            <div id="target-coords" style="font-size: 12px; margin-bottom: 10px; color: #00ffcc;">Target: Not Selected</div>
-            <button id="liveScanBtn" class="live-btn">Run Live Satellite Scan</button>
+            <p class="hint-text">Click anywhere on the map to set a target area (~10km × 10km), then run the scan.</p>
+            <div id="target-coords">Target: Not Selected</div>
+            <button id="liveScanBtn" class="btn-scan">🔍 Run Live Satellite Scan</button>
         </div>
 
+        <!-- Upload Section -->
         <div id="upload-section" class="panel-section">
-            <input type="file" id="imageInput" accept=".tif,.tiff" style="width: 100%; margin-bottom: 10px;">
-            <button id="analyzeBtn">Run Local File Analysis</button>
+            <p class="hint-text">Upload a 2-band Sentinel-1 GeoTIFF (VV + VH, dB scale).</p>
+            <input type="file" id="imageInput" accept=".tif,.tiff">
+            <button id="analyzeBtn" class="btn-upload">⚡ Run Local File Analysis</button>
         </div>
 
         <div id="status">Waiting for input...</div>
+
+        <!-- Summary Panel (shown after results) -->
+        <div id="summary-panel">
+            <h4>📊 Detection Summary</h4>
+            <div class="summary-row">
+                <span>Flood Zones Detected</span>
+                <span id="sum-zones">—</span>
+            </div>
+            <div class="summary-row">
+                <span>Total Flooded Area</span>
+                <span id="sum-area">—</span>
+            </div>
+            <div class="summary-row">
+                <span>Overall Severity</span>
+                <span id="sum-severity">—</span>
+            </div>
+            <div class="danger-breakdown" id="danger-breakdown"></div>
+        </div>
     </div>
 
     <script>
-        // 1. Initialize the Base Map
-        var map = L.map('disaster-map').setView([20, 0], 3); 
+        // ── Map Setup ──
+        var map = L.map('disaster-map').setView([20, 0], 3);
         L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
             maxZoom: 19,
             attribution: 'Tiles &copy; Esri'
         }).addTo(map);
 
-        // Removed floodIcon as per user request
-
-        var currentMarkers = L.layerGroup().addTo(map);
-        
-        // Target Marker Logic
+        var floodLayer = L.layerGroup().addTo(map);
         var targetMarker = null;
         var selectedLat = null;
         var selectedLng = null;
-        
+
+        // ── Map Click — set target ──
         map.on('click', function(e) {
-            if(document.getElementById('live-section').classList.contains('active')) {
+            if (document.getElementById('live-section').classList.contains('active')) {
                 selectedLat = e.latlng.lat;
                 selectedLng = e.latlng.lng;
-                
-                if(targetMarker) {
-                    map.removeLayer(targetMarker);
-                }
+
+                if (targetMarker) map.removeLayer(targetMarker);
                 targetMarker = L.circleMarker(e.latlng, {
-                    color: '#00ffcc',
-                    radius: 8,
-                    weight: 3
+                    color: '#00ffcc', radius: 8, weight: 3, fillOpacity: 0.2
                 }).addTo(map);
-                
-                document.getElementById('target-coords').innerText = `Target: ${selectedLat.toFixed(4)}, ${selectedLng.toFixed(4)}`;
+
+                document.getElementById('target-coords').innerText =
+                    `Target: ${selectedLat.toFixed(4)}°, ${selectedLng.toFixed(4)}°`;
             }
         });
 
+        // ── Tab Switch ──
         function switchTab(tabId) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.panel-section').forEach(p => p.classList.remove('active'));
-            
-            if(tabId === 'live') {
+            if (tabId === 'live') {
                 document.querySelectorAll('.tab')[0].classList.add('active');
                 document.getElementById('live-section').classList.add('active');
             } else {
@@ -118,83 +242,144 @@
             }
         }
 
-        // Shared function to process GeoJSON response
-        function renderAIResponse(geojsonData, statusText) {
-            if (geojsonData.error) {
-                statusText.innerHTML = "❌ " + geojsonData.error;
-                return;
+        // ── Danger level → polygon color ──
+        function dangerColor(level) {
+            switch (level) {
+                case 'Low':      return '#6dff6d';
+                case 'Medium':   return '#ffd24d';
+                case 'High':     return '#ff6d3a';
+                case 'Critical': return '#ff3a5c';
+                default:         return '#ff4d4d';
             }
-        
-            if (!geojsonData.features || geojsonData.features.length === 0) {
-                statusText.innerHTML = "✅ Area Clear: No Floods Detected.";
-                return;
-            }
-
-            currentMarkers.clearLayers();
-
-            // Render precise flood polygons
-            const geoJsonLayer = L.geoJSON(geojsonData, {
-                style: function() {
-                    return { color: '#ff4d4d', weight: 2, fillOpacity: 0.5 };
-                }
-            }).addTo(currentMarkers);
-
-            // Fly to the bounds of all detected polygons
-            map.flyToBounds(geoJsonLayer.getBounds(), { padding: [50, 50], maxZoom: 14 });
-
-            statusText.innerHTML = "✅ AI Detection Complete!";
         }
 
-        // 2. The Logic: Live Scan
-        document.getElementById('liveScanBtn').addEventListener('click', async () => {
-            const statusText = document.getElementById('status');
-            if (selectedLat === null) return alert("Please click on the map to select a target area first!");
+        // ── Severity badge HTML ──
+        function severityBadge(level) {
+            const cls = {
+                'None': 'sev-none', 'Low': 'sev-low',
+                'Medium': 'sev-medium', 'High': 'sev-high', 'Critical': 'sev-critical'
+            }[level] || 'sev-none';
+            return `<span class="severity-badge ${cls}">${level}</span>`;
+        }
 
-            statusText.innerHTML = "⏳ Searching Microsoft Planetary Computer for live Sentinel-1 data...";
-            
-            // Create a roughly 10km x 10km bounding box around the click
-            // 1 degree lat is ~111km. 10km is ~0.09 degrees. Half is 0.045
+        // ── Render AI response on map + summary panel ──
+        function renderAIResponse(geojsonData, statusEl) {
+            floodLayer.clearLayers();
+            document.getElementById('summary-panel').style.display = 'none';
+
+            if (geojsonData.error && (!geojsonData.features || geojsonData.features.length === 0)) {
+                statusEl.innerHTML = `❌ ${geojsonData.error}`;
+                return;
+            }
+
+            if (!geojsonData.features || geojsonData.features.length === 0) {
+                statusEl.innerHTML = '✅ Area Clear — No flood zones detected.';
+                return;
+            }
+
+            // Render polygons, color-coded by danger level
+            const geoJsonLayer = L.geoJSON(geojsonData, {
+                style: function(feature) {
+                    const color = dangerColor(feature.properties.danger_level);
+                    return { color: color, weight: 2, fillOpacity: 0.45, fillColor: color };
+                },
+                onEachFeature: function(feature, layer) {
+                    const p = feature.properties;
+                    layer.bindPopup(
+                        `<b>Flood Zone</b><br>
+                         Area: <b>${p.area_km2} km²</b><br>
+                         Severity: <b>${p.danger_level}</b>`
+                    );
+                }
+            }).addTo(floodLayer);
+
+            map.flyToBounds(geoJsonLayer.getBounds(), { padding: [50, 50], maxZoom: 14 });
+            statusEl.innerHTML = '✅ AI Detection Complete.';
+
+            // ── Populate summary panel ──
+            const s = geojsonData.summary;
+            if (s) {
+                document.getElementById('sum-zones').innerText = s.total_flood_zones;
+                document.getElementById('sum-area').innerText  = `${s.total_area_km2} km²`;
+                document.getElementById('sum-severity').innerHTML = severityBadge(s.overall_severity);
+
+                // Danger breakdown chips
+                const breakdown = document.getElementById('danger-breakdown');
+                breakdown.innerHTML = '';
+                const chipClass = { Low: 'chip-low', Medium: 'chip-medium', High: 'chip-high', Critical: 'chip-critical' };
+                for (const [level, count] of Object.entries(s.danger_breakdown)) {
+                    if (count > 0) {
+                        breakdown.innerHTML += `<span class="danger-chip ${chipClass[level]}">${level}: ${count}</span>`;
+                    }
+                }
+
+                document.getElementById('summary-panel').style.display = 'block';
+            }
+        }
+
+        // ── Live Scan ──
+        document.getElementById('liveScanBtn').addEventListener('click', async () => {
+            const statusEl = document.getElementById('status');
+            if (selectedLat === null) {
+                alert('Click on the map to select a target area first.');
+                return;
+            }
+
+            const btn = document.getElementById('liveScanBtn');
+            btn.disabled = true;
+            statusEl.innerHTML = '⏳ Querying Microsoft Planetary Computer for Sentinel-1 data...';
+            document.getElementById('summary-panel').style.display = 'none';
+
             const offsetLat = 0.045;
-            // Longitude distance varies by latitude. offset = 10km / (111.32 * cos(lat))
             const offsetLng = 10 / (111.32 * Math.cos(selectedLat * Math.PI / 180)) / 2;
-            
             const bbox = [
-                selectedLng - offsetLng, // minx (west)
-                selectedLat - offsetLat, // miny (south)
-                selectedLng + offsetLng, // maxx (east)
-                selectedLat + offsetLat  // maxy (north)
+                selectedLng - offsetLng,
+                selectedLat - offsetLat,
+                selectedLng + offsetLng,
+                selectedLat + offsetLat
             ];
 
             try {
-                const response = await fetch('/api/live-analyze', { 
-                    method: 'POST', 
+                const response = await fetch('/api/live-analyze', {
+                    method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bbox: bbox }) 
+                    body: JSON.stringify({ bbox })
                 });
-                const geojsonData = await response.json();
-                renderAIResponse(geojsonData, statusText);
+                const data = await response.json();
+                renderAIResponse(data, statusEl);
             } catch (err) {
-                statusText.innerHTML = "❌ Error connecting to backend.";
+                statusEl.innerHTML = '❌ Error connecting to backend.';
+            } finally {
+                btn.disabled = false;
             }
         });
 
-        // 3. The Logic: Upload File
+        // ── Upload & Analyze ──
         document.getElementById('analyzeBtn').addEventListener('click', async () => {
             const fileInput = document.getElementById('imageInput');
-            const statusText = document.getElementById('status');
+            const statusEl  = document.getElementById('status');
 
-            if (fileInput.files.length === 0) return alert("Select an image!");
+            if (fileInput.files.length === 0) {
+                alert('Please select a .tif file first.');
+                return;
+            }
 
-            statusText.innerHTML = "⏳ Processing Local AI Analysis...";
+            const btn = document.getElementById('analyzeBtn');
+            btn.disabled = true;
+            statusEl.innerHTML = '⏳ Running AI analysis on uploaded file...';
+            document.getElementById('summary-panel').style.display = 'none';
+
             const formData = new FormData();
             formData.append('satelliteImage', fileInput.files[0]);
 
             try {
                 const response = await fetch('/api/analyze-satellite', { method: 'POST', body: formData });
-                const geojsonData = await response.json();
-                renderAIResponse(geojsonData, statusText);
+                const data = await response.json();
+                renderAIResponse(data, statusEl);
             } catch (err) {
-                statusText.innerHTML = "❌ Error in AI pipeline.";
+                statusEl.innerHTML = '❌ Error in AI pipeline.';
+            } finally {
+                btn.disabled = false;
             }
         });
     </script>
