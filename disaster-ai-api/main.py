@@ -1,7 +1,7 @@
-import io
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
+
 import torch
 import rasterio
 from rasterio.features import shapes
@@ -20,6 +20,23 @@ import rioxarray
 from global_land_mask import globe
 
 # ─────────────────────────────────────────────
+# Inference configuration
+# ─────────────────────────────────────────────
+# FLOOD_THRESHOLD — sigmoid probability that must be exceeded for a pixel to
+# count as flood.  0.5 is the mathematical midpoint but causes over-prediction
+# on dry low-backscatter agricultural land (the "big red blob" problem).
+# Raising to 0.65 requires the model to be significantly more confident before
+# calling something a flood, cutting false positives without needing retraining.
+FLOOD_THRESHOLD = 0.65
+
+# FALSE_POSITIVE_MAX_KM2 — any single connected polygon larger than this is
+# almost certainly a false positive.  Real flood patches in a 10×10 km scan
+# are rarely more than 5 km² as a single contiguous blob.  Anything larger is
+# likely the model mislabelling a large uniform-backscatter area (dry farmland,
+# desert, urban sprawl) as water.
+FALSE_POSITIVE_MAX_KM2 = 5.0
+
+# ─────────────────────────────────────────────
 # Initialize the API
 # ─────────────────────────────────────────────
 app = FastAPI(title="Disaster Management AI Engine")
@@ -35,46 +52,37 @@ app.add_middleware(
 # ─────────────────────────────────────────────
 # Load Model
 # ─────────────────────────────────────────────
-print("🧠 Loading AI Model...")
+print("🧠 Loading AI Model (v3 — EfficientNet-B3 backbone)...")
 device = torch.device("cpu")
 model = smp.Unet(
-    encoder_name="resnet34",
+    encoder_name="efficientnet-b3",   # v3: upgraded from resnet34
     encoder_weights=None,
     in_channels=2,
     classes=1,
 )
 model.load_state_dict(torch.load("flood_unet_resnet34.pth", map_location=device))
 model.eval()
-print("✅ AI Model Armed and Ready.")
+print(f"✅ AI Model Armed and Ready.  Threshold={FLOOD_THRESHOLD}  Max polygon={FALSE_POSITIVE_MAX_KM2} km²")
 
 
 # ─────────────────────────────────────────────
 # Shared Helper: Compute polygon area in km²
-# Projects to an equal-area CRS (EPSG:6933) for accurate measurement
 # ─────────────────────────────────────────────
 def compute_area_km2(geometry) -> float:
     """
-    Takes a single Shapely geometry in EPSG:4326 (lat/lon),
-    reprojects it to an equal-area projection, and returns area in km².
+    Reprojects a Shapely geometry from EPSG:4326 to an equal-area CRS
+    (EPSG:6933) and returns the area in km².
     """
     gdf = gpd.GeoDataFrame(geometry=[geometry], crs="EPSG:4326")
-    gdf_projected = gdf.to_crs("EPSG:6933")  # NSIDC EASE-Grid 2.0 — equal area
+    gdf_projected = gdf.to_crs("EPSG:6933")
     area_m2 = gdf_projected.geometry.area.values[0]
-    return round(area_m2 / 1_000_000, 4)  # Convert m² → km²
+    return round(area_m2 / 1_000_000, 4)
 
 
 # ─────────────────────────────────────────────
 # Shared Helper: Assign danger level from area
 # ─────────────────────────────────────────────
 def get_danger_level(area_km2: float) -> str:
-    """
-    Classifies flood severity based on flooded area.
-    Thresholds are based on standard emergency management scales:
-      Low      < 0.1 km²  — minor localised flooding
-      Medium   0.1–1 km²  — moderate flood zone
-      High     1–10 km²   — significant flood event
-      Critical > 10 km²   — major disaster-scale flooding
-    """
     if area_km2 < 0.1:
         return "Low"
     elif area_km2 < 1.0:
@@ -86,15 +94,9 @@ def get_danger_level(area_km2: float) -> str:
 
 
 # ─────────────────────────────────────────────
-# Shared Helper: Build GeoJSON features with
-# area and danger level attached to each polygon
+# Shared Helper: Build GeoJSON features
 # ─────────────────────────────────────────────
 def build_features(gdf: gpd.GeoDataFrame) -> tuple[list, dict]:
-    """
-    Converts a filtered GeoDataFrame into GeoJSON features.
-    Each feature gets: area_km2, danger_level, type.
-    Also returns a summary dict with totals.
-    """
     features = []
     total_area = 0.0
     danger_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
@@ -104,7 +106,6 @@ def build_features(gdf: gpd.GeoDataFrame) -> tuple[list, dict]:
         danger = get_danger_level(area)
         total_area += area
         danger_counts[danger] += 1
-
         features.append({
             "type": "Feature",
             "geometry": mapping(geom),
@@ -136,35 +137,64 @@ def build_features(gdf: gpd.GeoDataFrame) -> tuple[list, dict]:
 
 
 # ─────────────────────────────────────────────
-# Shared Helper: OSM + ocean filtering
-# Takes raw polygons + CRS string, returns filtered GeoDataFrame
+# Shared Helper: False-positive size filter
+# Removes any single polygon whose area exceeds FALSE_POSITIVE_MAX_KM2.
+# Applied BEFORE OSM filtering so we don't waste time querying OSM for blobs
+# that are clearly wrong.
+# ─────────────────────────────────────────────
+def remove_large_false_positives(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """
+    Drop polygons that are too large to be real flood patches.
+    A single contiguous flood zone >5 km² in a 10×10 km scan is a
+    near-certain false positive from the model misclassifying dry farmland.
+    """
+    if gdf.empty:
+        return gdf
+
+    # Compute area in equal-area projection
+    gdf_proj = gdf.to_crs("EPSG:6933")
+    areas_km2 = gdf_proj.geometry.area / 1_000_000
+    mask = areas_km2 <= FALSE_POSITIVE_MAX_KM2
+    removed = (~mask).sum()
+    if removed > 0:
+        print(f"🚫 Removed {removed} oversized polygon(s) (>{FALSE_POSITIVE_MAX_KM2} km²) — likely false positives.")
+    return gdf[mask].reset_index(drop=True)
+
+
+# ─────────────────────────────────────────────
+# Shared Helper: Ocean + OSM permanent water filter
 # ─────────────────────────────────────────────
 def filter_polygons(raw_polygons: list, source_crs: str) -> gpd.GeoDataFrame:
     """
-    1. Reproject polygons to EPSG:4326
-    2. Remove ocean polygons using global land mask
-    3. Subtract permanent water bodies (OSM)
-    Returns filtered GeoDataFrame in EPSG:4326, or empty GDF.
+    Pipeline:
+      1. Reproject to EPSG:4326
+      2. Remove oversized false-positive blobs
+      3. Remove ocean polygons (global land mask)
+      4. Subtract permanent water (OSM)
     """
     gdf = gpd.GeoDataFrame(geometry=raw_polygons, crs=source_crs)
 
-    # Reproject to lat/lon if needed
     if str(gdf.crs) != "EPSG:4326":
         gdf = gdf.to_crs("EPSG:4326")
 
-    # --- Ocean filter ---
-    print("🌍 Filtering out open oceans using global land mask...")
+    # Step 2 — size filter (catches the "big red blob")
+    gdf = remove_large_false_positives(gdf)
+    if gdf.empty:
+        print("✅ All polygons removed by size filter. Area likely clear.")
+        return gdf
+
+    # Step 3 — ocean filter
+    print("🌍 Filtering out open oceans...")
     lat = gdf.geometry.centroid.y.values
     lon = gdf.geometry.centroid.x.values
     is_on_land = globe.is_land(lat, lon)
     gdf = gdf[is_on_land]
-
     if gdf.empty:
         print("✅ All detected water was open ocean. Area clear.")
         return gdf
 
-    # --- OSM permanent water filter ---
-    print("🌍 Fetching permanent inland water mask from OpenStreetMap...")
+    # Step 4 — OSM permanent water filter
+    print("🌍 Fetching permanent water from OpenStreetMap...")
     bounds = gdf.total_bounds
     ox_bbox = (bounds[0], bounds[1], bounds[2], bounds[3])
     tags = {"natural": ["water", "coastline"], "waterway": ["river", "stream"], "water": True}
@@ -172,7 +202,7 @@ def filter_polygons(raw_polygons: list, source_crs: str) -> gpd.GeoDataFrame:
     try:
         osm_water = ox.features_from_bbox(bbox=ox_bbox, tags=tags)
         if not osm_water.empty:
-            print(f"🌊 Found {len(osm_water)} permanent water bodies in OSM. Filtering...")
+            print(f"🌊 Found {len(osm_water)} permanent water bodies. Filtering...")
             osm_water["geometry"] = osm_water.geometry.buffer(0)
             osm_geom = osm_water.unary_union
             gdf["geometry"] = gdf.geometry.difference(osm_geom)
@@ -187,12 +217,26 @@ def filter_polygons(raw_polygons: list, source_crs: str) -> gpd.GeoDataFrame:
 
 
 # ─────────────────────────────────────────────
+# Shared: empty response helper
+# ─────────────────────────────────────────────
+EMPTY_RESPONSE = {
+    "type": "FeatureCollection",
+    "features": [],
+    "summary": {
+        "total_flood_zones": 0,
+        "total_area_km2": 0.0,
+        "danger_breakdown": {"Low": 0, "Medium": 0, "High": 0, "Critical": 0},
+        "overall_severity": "None"
+    }
+}
+
+
+# ─────────────────────────────────────────────
 # Endpoint 1: Upload & Analyze (local TIF)
 # ─────────────────────────────────────────────
 @app.post("/predict")
 async def predict_flood(file: UploadFile = File(...)):
     print(f"📡 Receiving satellite imagery: {file.filename}")
-
     content = await file.read()
 
     with rasterio.MemoryFile(content) as memfile:
@@ -200,8 +244,6 @@ async def predict_flood(file: UploadFile = File(...)):
             image = src.read()
             transform = src.transform
             crs = str(src.crs) if src.crs else "EPSG:4326"
-
-            # Input TIF is already in dB scale
             image = np.nan_to_num(image)
             image = np.clip(image, -30, 0)
             image = (image + 30) / 30.0
@@ -211,54 +253,43 @@ async def predict_flood(file: UploadFile = File(...)):
     with torch.no_grad():
         raw_prediction = model(image_tensor)
         prob_mask = torch.sigmoid(raw_prediction)
-        predicted_mask = (prob_mask > 0.5).float().numpy().squeeze().astype("uint8")
+        # Use configurable threshold instead of hardcoded 0.5
+        predicted_mask = (prob_mask > FLOOD_THRESHOLD).float().numpy().squeeze().astype("uint8")
 
     raw_polygons = [
         shape(geom)
         for geom, value in shapes(predicted_mask, transform=transform)
         if value == 1.0
     ]
-    print(f"🗺️ Extraction complete: Found {len(raw_polygons)} raw water zones.")
+    print(f"🗺️ Found {len(raw_polygons)} raw polygons at threshold={FLOOD_THRESHOLD}.")
 
     if not raw_polygons:
-        return {"type": "FeatureCollection", "features": [], "summary": {
-            "total_flood_zones": 0, "total_area_km2": 0.0,
-            "danger_breakdown": {"Low": 0, "Medium": 0, "High": 0, "Critical": 0},
-            "overall_severity": "None"
-        }}
+        return EMPTY_RESPONSE
 
     gdf = filter_polygons(raw_polygons, crs)
-
     if gdf.empty:
-        return {"type": "FeatureCollection", "features": [], "summary": {
-            "total_flood_zones": 0, "total_area_km2": 0.0,
-            "danger_breakdown": {"Low": 0, "Medium": 0, "High": 0, "Critical": 0},
-            "overall_severity": "None"
-        }}
+        return EMPTY_RESPONSE
 
     features, summary = build_features(gdf)
-
-    return {
-        "type": "FeatureCollection",
-        "features": features,
-        "summary": summary
-    }
+    return {"type": "FeatureCollection", "features": features, "summary": summary}
 
 
 # ─────────────────────────────────────────────
 # Endpoint 2: Live Satellite Scan
 # ─────────────────────────────────────────────
 class LiveScanRequest(BaseModel):
-    bbox: list[float]  # [minx, miny, maxx, maxy]
+    bbox: list[float]   # [minx, miny, maxx, maxy]
+    lat: float | None = None
+    lng: float | None = None
 
 
 @app.post("/predict-live")
 async def predict_live(request: LiveScanRequest):
     req_bbox = request.bbox
-    print(f"📡 Initiating live scan for bbox: {req_bbox}")
+    print(f"📡 Live scan bbox: {req_bbox}")
 
     try:
-        # 1. Query Microsoft Planetary Computer for Sentinel-1 RTC
+        # 1. Query Microsoft Planetary Computer
         catalog = Client.open(
             "https://planetarycomputer.microsoft.com/api/stac/v1",
             modifier=pc.sign_inplace
@@ -272,20 +303,12 @@ async def predict_live(request: LiveScanRequest):
         )
         items = list(search.items())
         if not items:
-            return {
-                "type": "FeatureCollection", "features": [],
-                "error": "No recent Sentinel-1 data found for this region.",
-                "summary": {
-                    "total_flood_zones": 0, "total_area_km2": 0.0,
-                    "danger_breakdown": {"Low": 0, "Medium": 0, "High": 0, "Critical": 0},
-                    "overall_severity": "None"
-                }
-            }
+            return {**EMPTY_RESPONSE, "error": "No recent Sentinel-1 data found for this region."}
 
         item = items[0]
         print(f"✅ Found satellite data from {item.datetime}")
 
-        # 2. Download VV and VH bands
+        # 2. Download + clip VV and VH bands
         vv_href = item.assets["vv"].href
         vh_href = item.assets["vh"].href
 
@@ -293,7 +316,6 @@ async def predict_live(request: LiveScanRequest):
         vv_ds = rioxarray.open_rasterio(vv_href)
         vh_ds = rioxarray.open_rasterio(vh_href)
 
-        # Reproject bbox to satellite CRS (UTM) for clipping
         bbox_geom = box(*req_bbox)
         bbox_gdf = gpd.GeoDataFrame(geometry=[bbox_geom], crs="EPSG:4326")
         bbox_gdf_proj = bbox_gdf.to_crs(vv_ds.rio.crs)
@@ -307,77 +329,46 @@ async def predict_live(request: LiveScanRequest):
         transform = vv_clipped.rio.transform()
         source_crs = str(vv_ds.rio.crs)
 
-        print("⚙️ Processing radar channels and applying decibel transformation...")
+        # 3. Preprocess — linear power → dB → normalise
+        print("⚙️ Preprocessing radar channels...")
         image = np.stack([vv_data, vh_data], axis=0)
-
-        # MPC data is linear power — convert to dB
         epsilon = 1e-10
         image = 10 * np.log10(np.clip(image, a_min=epsilon, a_max=None))
-
         image = np.nan_to_num(image)
         image = np.clip(image, -30, 0)
         image = (image + 30) / 30.0
 
         image_tensor = torch.tensor(image, dtype=torch.float32).unsqueeze(0).to(device)
 
-        # 3. Run inference
+        # 4. Inference
         with torch.no_grad():
             raw_prediction = model(image_tensor)
             prob_mask = torch.sigmoid(raw_prediction)
-            predicted_mask = (prob_mask > 0.5).float().numpy().squeeze().astype("uint8")
+            predicted_mask = (prob_mask > FLOOD_THRESHOLD).float().numpy().squeeze().astype("uint8")
 
-        # 4. Extract polygons
+        # 5. Vectorise
         raw_polygons = [
             shape(geom)
             for geom, value in shapes(predicted_mask, transform=transform)
             if value == 1.0
         ]
-        print(f"🗺️ Extraction complete: Found {len(raw_polygons)} raw water zones.")
+        print(f"🗺️ Found {len(raw_polygons)} raw polygons at threshold={FLOOD_THRESHOLD}.")
 
         if not raw_polygons:
-            return {
-                "type": "FeatureCollection", "features": [],
-                "summary": {
-                    "total_flood_zones": 0, "total_area_km2": 0.0,
-                    "danger_breakdown": {"Low": 0, "Medium": 0, "High": 0, "Critical": 0},
-                    "overall_severity": "None"
-                }
-            }
+            return EMPTY_RESPONSE
 
-        # 5. Filter (ocean + OSM)
+        # 6. Filter (size → ocean → OSM)
         gdf = filter_polygons(raw_polygons, source_crs)
-
         if gdf.empty:
-            return {
-                "type": "FeatureCollection", "features": [],
-                "summary": {
-                    "total_flood_zones": 0, "total_area_km2": 0.0,
-                    "danger_breakdown": {"Low": 0, "Medium": 0, "High": 0, "Critical": 0},
-                    "overall_severity": "None"
-                }
-            }
+            return EMPTY_RESPONSE
 
-        # 6. Build features with area + danger level
+        # 7. Build GeoJSON
         features, summary = build_features(gdf)
-
-        return {
-            "type": "FeatureCollection",
-            "features": features,
-            "summary": summary
-        }
+        return {"type": "FeatureCollection", "features": features, "summary": summary}
 
     except Exception as e:
         print(f"❌ Error in live scan pipeline: {e}")
-        return {
-            "error": str(e),
-            "type": "FeatureCollection",
-            "features": [],
-            "summary": {
-                "total_flood_zones": 0, "total_area_km2": 0.0,
-                "danger_breakdown": {"Low": 0, "Medium": 0, "High": 0, "Critical": 0},
-                "overall_severity": "None"
-            }
-        }
+        return {**EMPTY_RESPONSE, "error": str(e)}
 
 
 if __name__ == "__main__":

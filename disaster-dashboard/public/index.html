@@ -69,6 +69,42 @@
             font-family: monospace;
         }
 
+        /* ── Coordinate input row ── */
+        .coord-row {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 8px;
+        }
+        .coord-row input {
+            flex: 1;
+            background: rgba(255,255,255,0.07);
+            border: 1px solid #333;
+            border-radius: 5px;
+            color: #00ffcc;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 6px 8px;
+            width: 0; /* flex handles width */
+            outline: none;
+        }
+        .coord-row input::placeholder { color: #444; }
+        .coord-row input:focus { border-color: #00ffcc44; }
+        .btn-jump {
+            background: #1a3a2a;
+            border: 1px solid #00ffcc44;
+            color: #00ffcc;
+            border-radius: 5px;
+            font-size: 11px;
+            font-weight: bold;
+            padding: 6px 10px;
+            cursor: pointer;
+            white-space: nowrap;
+            width: auto;
+            margin-top: 0;
+            transition: background 0.2s;
+        }
+        .btn-jump:hover { background: #1f4a33; }
+
         button {
             color: white;
             border: none;
@@ -268,6 +304,14 @@
     <!-- ── Live Scan ── -->
     <div id="live-section" class="panel-section active">
         <p class="hint-text">Click anywhere on the map to set a target area (~10km × 10km), then run the scan.</p>
+
+        <!-- Manual coordinate entry — type a lat/lng and jump straight to it -->
+        <div class="coord-row">
+            <input type="number" id="inputLat" placeholder="Lat  e.g. 19.9587" step="any">
+            <input type="number" id="inputLng" placeholder="Lng  e.g. 76.7285" step="any">
+            <button class="btn-jump" onclick="jumpToCoords()">▶ Go</button>
+        </div>
+
         <div id="target-coords">Target: Not Selected</div>
         <button id="liveScanBtn" class="btn-scan">🔍 Run Live Satellite Scan</button>
     </div>
@@ -358,6 +402,34 @@ map.on('click', function(e) {
             `Target: ${selectedLat.toFixed(4)}°, ${selectedLng.toFixed(4)}°`;
     }
 });
+
+// ── Manual coordinate jump ───────────────────────────────────────────────────
+// Lets you type a lat/lng and set the target without clicking the map.
+// Useful for repeatedly testing the same location.
+function jumpToCoords() {
+    const lat = parseFloat(document.getElementById('inputLat').value);
+    const lng = parseFloat(document.getElementById('inputLng').value);
+
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        alert('Enter a valid latitude (-90 to 90) and longitude (-180 to 180).');
+        return;
+    }
+
+    selectedLat = lat;
+    selectedLng = lng;
+
+    const latlng = L.latLng(lat, lng);
+
+    if (targetMarker) map.removeLayer(targetMarker);
+    targetMarker = L.circleMarker(latlng, {
+        color: '#00ffcc', radius: 8, weight: 3, fillOpacity: 0.2
+    }).addTo(map);
+
+    map.flyTo(latlng, 12, { duration: 1.2 });
+
+    document.getElementById('target-coords').innerText =
+        `Target: ${lat.toFixed(4)}°, ${lng.toFixed(4)}°`;
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Tab switching
