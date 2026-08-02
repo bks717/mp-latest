@@ -1,4 +1,7 @@
 import io
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
 import torch
 import rasterio
 from rasterio.features import shapes
