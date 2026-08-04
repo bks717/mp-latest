@@ -493,7 +493,7 @@
     <aside>
         <div class="tabs">
             <button class="tab active" data-tab="live"     onclick="switchTab('live')">📡 Scan</button>
-            <button class="tab"        data-tab="livedata" onclick="switchTab('livedata')">🌐 Live Data</button>
+            <button class="tab"        data-tab="livedata" onclick="switchTab('livedata')">🌐 Live Data (GDACS)</button>
             <button class="tab"        data-tab="upload"   onclick="switchTab('upload')">📁 Upload</button>
             <button class="tab"        data-tab="history"  onclick="switchTab('history')">📋 History</button>
         </div>
@@ -590,12 +590,26 @@
             <button class="bm-btn"        data-bm="streets"   onclick="setBasemap('streets')">Streets</button>
         </div>
 
+        <div class="map-overlay" id="rainfall-toggle-container" style="top: 72px; right: 18px; padding: 4px;">
+            <button class="bm-btn" id="rainfall-btn" onclick="toggleRainfall()" style="display: flex; align-items: center; gap: 6px;">
+                <span>🌧️</span> <span>NASA GPM Rainfall</span>
+            </button>
+        </div>
+
         <div class="map-overlay" id="legend">
-            <div class="legend-title">Flood Severity</div>
-            <div class="legend-row"><span class="legend-swatch" style="background:#34d399"></span>Low · &lt; 0.1 km²</div>
-            <div class="legend-row"><span class="legend-swatch" style="background:#fbbf24"></span>Medium · &lt; 1 km²</div>
-            <div class="legend-row"><span class="legend-swatch" style="background:#fb923c"></span>High · &lt; 10 km²</div>
-            <div class="legend-row"><span class="legend-swatch" style="background:#f43f5e"></span>Critical · ≥ 10 km²</div>
+            <div id="flood-legend-section">
+                <div class="legend-title">Flood Severity</div>
+                <div class="legend-row"><span class="legend-swatch" style="background:#34d399"></span>Low · &lt; 0.1 km²</div>
+                <div class="legend-row"><span class="legend-swatch" style="background:#fbbf24"></span>Medium · &lt; 1 km²</div>
+                <div class="legend-row"><span class="legend-swatch" style="background:#fb923c"></span>High · &lt; 10 km²</div>
+                <div class="legend-row"><span class="legend-swatch" style="background:#f43f5e"></span>Critical · ≥ 10 km²</div>
+            </div>
+            <div id="rainfall-legend-section" style="display: none; border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px;">
+                <div class="legend-title" id="rainfall-legend-title">Rainfall Rate (IMERG)</div>
+                <div class="legend-row"><span class="legend-swatch" style="background:#3b82f6; opacity: 0.65;"></span>Light · 0.1 – 2 mm/h</div>
+                <div class="legend-row"><span class="legend-swatch" style="background:#fbbf24; opacity: 0.65;"></span>Moderate · 2 – 10 mm/h</div>
+                <div class="legend-row"><span class="legend-swatch" style="background:#ef4444; opacity: 0.65;"></span>Heavy · &gt; 10 mm/h</div>
+            </div>
         </div>
     </main>
 </div>
@@ -1013,6 +1027,47 @@ async function showFloodShape(eventid, episodeid, lat, lng, name, alertlevel) {
     } catch (err) {
         toast('Could not load the flood shape.', 'err');
         console.error(err);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// NASA GPM IMERG Rainfall Overlay
+// ════════════════════════════════════════════════════════════════════
+let rainfallLayer = null;
+
+function toggleRainfall() {
+    const btn = document.getElementById('rainfall-btn');
+    const legendSec = document.getElementById('rainfall-legend-section');
+    const legendTitle = document.getElementById('rainfall-legend-title');
+    
+    if (rainfallLayer) {
+        map.removeLayer(rainfallLayer);
+        rainfallLayer = null;
+        btn.classList.remove('active');
+        if (legendSec) legendSec.style.display = 'none';
+        if (legendTitle) legendTitle.textContent = 'Rainfall Rate (IMERG)';
+        toast('Rainfall overlay disabled.', 'info', 1800);
+    } else {
+        const today = new Date();
+        const targetDate = new Date(today);
+        // NASA GIBS daily IMERG layers have a 1-2 day lag. Using 2 days guarantees data availability.
+        targetDate.setDate(targetDate.getDate() - 2);
+        const dateStr = targetDate.toISOString().split('T')[0];
+        
+        rainfallLayer = L.tileLayer.wms('https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi?', {
+            layers: 'IMERG_Precipitation_Rate',
+            format: 'image/png',
+            transparent: true,
+            time: dateStr,
+            opacity: 0.65,
+            attribution: '&copy; NASA GIBS / GPM IMERG'
+        });
+        
+        rainfallLayer.addTo(map);
+        btn.classList.add('active');
+        if (legendSec) legendSec.style.display = 'block';
+        if (legendTitle) legendTitle.textContent = `Rainfall Rate (IMERG · ${dateStr})`;
+        toast(`Loaded NASA GPM IMERG Rainfall for ${dateStr}.`, 'ok', 3200);
     }
 }
 

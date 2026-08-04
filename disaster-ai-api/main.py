@@ -88,6 +88,33 @@ def build_model_input(vv_norm: np.ndarray, vh_norm: np.ndarray) -> torch.Tensor:
 
 
 # ─────────────────────────────────────────────
+# Shared Helper: Run Model Inference with padding
+# ─────────────────────────────────────────────
+def run_inference(image_tensor: torch.Tensor) -> np.ndarray:
+    """
+    Runs model inference on the input tensor. Pads the input tensor to be divisible by 32 
+    as expected by U-Net, and crops the output back to the original shape.
+    """
+    _, _, H, W = image_tensor.shape
+    pad_h = (32 - H % 32) % 32
+    pad_w = (32 - W % 32) % 32
+    
+    if pad_h > 0 or pad_w > 0:
+        padded_tensor = torch.nn.functional.pad(image_tensor, (0, pad_w, 0, pad_h), mode="constant", value=0.0)
+    else:
+        padded_tensor = image_tensor
+
+    with torch.no_grad():
+        raw_prediction = model(padded_tensor)
+        # Crop back to original shape
+        raw_prediction = raw_prediction[:, :, :H, :W]
+        prob_mask = torch.sigmoid(raw_prediction)
+        predicted_mask = (prob_mask > FLOOD_THRESHOLD).float().numpy().squeeze().astype("uint8")
+        
+    return predicted_mask
+
+
+# ─────────────────────────────────────────────
 # Shared Helper: Compute polygon area in km²
 # ─────────────────────────────────────────────
 def compute_area_km2(geometry) -> float:
@@ -273,11 +300,7 @@ async def predict_flood(file: UploadFile = File(...)):
     # Uploaded TIF is 2-band (VV, VH); reconstruct the ratio + water channels.
     image_tensor = build_model_input(image[0], image[1])
 
-    with torch.no_grad():
-        raw_prediction = model(image_tensor)
-        prob_mask = torch.sigmoid(raw_prediction)
-        # Use configurable threshold instead of hardcoded 0.5
-        predicted_mask = (prob_mask > FLOOD_THRESHOLD).float().numpy().squeeze().astype("uint8")
+    predicted_mask = run_inference(image_tensor)
 
     raw_polygons = [
         shape(geom)
@@ -365,10 +388,7 @@ async def predict_live(request: LiveScanRequest):
         image_tensor = build_model_input(image[0], image[1])
 
         # 4. Inference
-        with torch.no_grad():
-            raw_prediction = model(image_tensor)
-            prob_mask = torch.sigmoid(raw_prediction)
-            predicted_mask = (prob_mask > FLOOD_THRESHOLD).float().numpy().squeeze().astype("uint8")
+        predicted_mask = run_inference(image_tensor)
 
         # 5. Vectorise
         raw_polygons = [
