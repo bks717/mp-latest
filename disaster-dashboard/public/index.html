@@ -1,693 +1,1041 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Disaster Management AI Dashboard</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FloodWatch AI — Disaster Management Dashboard</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
-        * { box-sizing: border-box; }
-        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
-        #disaster-map { height: 100vh; width: 100vw; z-index: 1; }
-
-        /* ── Control Panel ── */
-        #control-panel {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            background: rgba(10, 10, 20, 0.92);
-            color: white;
-            padding: 20px;
-            border-radius: 12px;
-            z-index: 1000;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-            width: 340px;
-            border: 1px solid rgba(255,255,255,0.08);
-            max-height: 92vh;
-            overflow-y: auto;
+        /* ══════════════════════════════════════════════════════════════
+           Design System
+           ══════════════════════════════════════════════════════════════ */
+        :root {
+            --bg-0:      #0a0e17;   /* deepest */
+            --bg-1:      #111725;   /* panel */
+            --bg-2:      #1a2233;   /* raised */
+            --bg-3:      #232d42;   /* hover */
+            --border:    rgba(255,255,255,0.08);
+            --border-2:  rgba(255,255,255,0.14);
+            --text-0:    #f1f5f9;   /* primary */
+            --text-1:    #9aa7bd;   /* secondary */
+            --text-2:    #5f6b82;   /* muted */
+            --accent:    #2dd4bf;   /* teal */
+            --accent-dk: #14a396;
+            --blue:      #3b82f6;
+            --red:       #ef4444;
+            --sev-low:      #34d399;
+            --sev-medium:   #fbbf24;
+            --sev-high:     #fb923c;
+            --sev-critical: #f43f5e;
+            --shadow:    0 10px 40px rgba(0,0,0,0.5);
+            --radius:    14px;
+            --radius-sm: 9px;
         }
 
-        #control-panel h3 {
-            margin: 0 0 14px 0;
-            font-size: 16px;
-            letter-spacing: 0.5px;
-            color: #fff;
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        html, body {
+            height: 100%;
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--bg-0);
+            color: var(--text-0);
+            overflow: hidden;
+            -webkit-font-smoothing: antialiased;
         }
 
-        /* ── Tab bar ── */
-        .tab-bar {
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* ── App Shell ─────────────────────────────────────────────── */
+        #app {
+            display: grid;
+            grid-template-rows: 56px 1fr;
+            grid-template-columns: 380px 1fr;
+            grid-template-areas:
+                "header header"
+                "sidebar map";
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* ── Header ────────────────────────────────────────────────── */
+        header {
+            grid-area: header;
             display: flex;
-            margin-bottom: 15px;
-            border-bottom: 1px solid #333;
-            padding-bottom: 10px;
-            gap: 4px;
+            align-items: center;
+            gap: 14px;
+            padding: 0 20px;
+            background: var(--bg-1);
+            border-bottom: 1px solid var(--border);
+            z-index: 1200;
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            font-weight: 800;
+            font-size: 16px;
+            letter-spacing: -0.02em;
+        }
+        .brand-logo {
+            width: 32px; height: 32px;
+            display: grid; place-items: center;
+            background: linear-gradient(135deg, var(--accent), var(--blue));
+            border-radius: 9px;
+            font-size: 17px;
+        }
+        .brand small {
+            display: block;
+            font-weight: 500;
+            font-size: 10.5px;
+            color: var(--text-2);
+            letter-spacing: 0.02em;
+        }
+        .header-spacer { flex: 1; }
+
+        .engine-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-1);
+            padding: 6px 12px;
+            background: var(--bg-2);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+        }
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--text-2);
+            box-shadow: 0 0 0 0 rgba(45,212,191,0.5);
+        }
+        .status-dot.online  { background: var(--accent); animation: pulse 2s infinite; }
+        .status-dot.offline { background: var(--red); }
+        @keyframes pulse {
+            0%   { box-shadow: 0 0 0 0 rgba(45,212,191,0.5); }
+            70%  { box-shadow: 0 0 0 6px rgba(45,212,191,0); }
+            100% { box-shadow: 0 0 0 0 rgba(45,212,191,0); }
+        }
+
+        /* ── Sidebar ───────────────────────────────────────────────── */
+        aside {
+            grid-area: sidebar;
+            background: var(--bg-1);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            padding: 14px 16px 0;
+            gap: 6px;
         }
         .tab {
             flex: 1;
-            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            padding: 10px 4px;
+            font-size: 11.5px;
+            font-weight: 600;
+            color: var(--text-2);
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: var(--radius-sm);
             cursor: pointer;
-            color: #666;
-            font-weight: bold;
-            font-size: 12px;
-            padding: 5px 2px;
-            border-radius: 4px;
-            transition: color 0.2s;
+            transition: all 0.18s ease;
             white-space: nowrap;
         }
-        .tab.active { color: #00ffcc; }
-        .tab:hover:not(.active) { color: #aaa; }
-
-        .panel-section { display: none; }
-        .panel-section.active { display: block; }
-
-        /* ── Common widgets ── */
-        .hint-text { font-size: 12px; color: #888; margin-bottom: 10px; line-height: 1.5; }
-
-        #target-coords {
-            font-size: 12px;
-            margin-bottom: 10px;
-            color: #00ffcc;
-            font-family: monospace;
+        .tab:hover { color: var(--text-1); background: var(--bg-2); }
+        .tab.active {
+            color: var(--accent);
+            background: var(--bg-2);
+            border-color: var(--border-2);
         }
 
-        /* ── Coordinate input row ── */
-        .coord-row {
-            display: flex;
-            gap: 6px;
-            margin-bottom: 8px;
-        }
-        .coord-row input {
+        .sidebar-scroll {
             flex: 1;
-            background: rgba(255,255,255,0.07);
-            border: 1px solid #333;
-            border-radius: 5px;
-            color: #00ffcc;
-            font-family: monospace;
-            font-size: 12px;
-            padding: 6px 8px;
-            width: 0; /* flex handles width */
-            outline: none;
-        }
-        .coord-row input::placeholder { color: #444; }
-        .coord-row input:focus { border-color: #00ffcc44; }
-        .btn-jump {
-            background: #1a3a2a;
-            border: 1px solid #00ffcc44;
-            color: #00ffcc;
-            border-radius: 5px;
-            font-size: 11px;
-            font-weight: bold;
-            padding: 6px 10px;
-            cursor: pointer;
-            white-space: nowrap;
-            width: auto;
-            margin-top: 0;
-            transition: background 0.2s;
-        }
-        .btn-jump:hover { background: #1f4a33; }
-
-        button {
-            color: white;
-            border: none;
-            padding: 10px 15px;
-            margin-top: 8px;
-            cursor: pointer;
-            border-radius: 6px;
-            font-weight: bold;
-            width: 100%;
-            font-size: 13px;
-            transition: background 0.2s;
-        }
-        .btn-scan   { background-color: #0066ff; }
-        .btn-scan:hover   { background-color: #0052cc; }
-        .btn-upload { background-color: #cc0033; }
-        .btn-upload:hover { background-color: #a30029; }
-        .btn-secondary { background-color: #333; font-size: 12px; padding: 7px 10px; }
-        .btn-secondary:hover { background-color: #444; }
-        .btn-danger { background-color: #7a0000; font-size: 12px; padding: 7px 10px; }
-        .btn-danger:hover { background-color: #a30000; }
-        button:disabled { background-color: #2a2a2a; color: #555; cursor: not-allowed; }
-
-        input[type="file"] {
-            width: 100%;
-            margin-bottom: 6px;
-            font-size: 12px;
-            color: #ccc;
-        }
-
-        #status {
-            margin-top: 12px;
-            font-size: 13px;
-            color: #aaa;
-            min-height: 20px;
-            line-height: 1.5;
-        }
-
-        /* ── Summary Panel ── */
-        #summary-panel {
-            margin-top: 14px;
-            background: rgba(255,255,255,0.05);
-            border-radius: 8px;
-            padding: 12px;
-            display: none;
-            border: 1px solid rgba(255,255,255,0.08);
-        }
-        #summary-panel h4 {
-            margin: 0 0 10px 0;
-            font-size: 13px;
-            color: #ccc;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .summary-row {
-            display: flex;
-            justify-content: space-between;
-            font-size: 13px;
-            margin-bottom: 6px;
-            color: #bbb;
-        }
-        .summary-row span:last-child { font-weight: bold; color: #fff; }
-
-        .severity-badge {
-            display: inline-block;
-            padding: 2px 10px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: bold;
-        }
-        .sev-none     { background: #333;    color: #aaa; }
-        .sev-low      { background: #1a5c1a; color: #6dff6d; }
-        .sev-medium   { background: #5c4a00; color: #ffd24d; }
-        .sev-high     { background: #5c1a00; color: #ff6d3a; }
-        .sev-critical { background: #5c0011; color: #ff3a5c; }
-
-        .danger-breakdown { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
-        .danger-chip { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
-        .chip-low      { background: #1a5c1a; color: #6dff6d; }
-        .chip-medium   { background: #5c4a00; color: #ffd24d; }
-        .chip-high     { background: #5c1a00; color: #ff6d3a; }
-        .chip-critical { background: #5c0011; color: #ff3a5c; }
-
-        /* ── History Tab ── */
-        #history-section .history-toolbar {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 10px;
-        }
-        #history-section .history-toolbar button {
-            margin: 0;
-            flex: 1;
-        }
-
-        #history-status {
-            font-size: 12px;
-            color: #666;
-            margin-bottom: 8px;
-            min-height: 16px;
-        }
-
-        .history-table-wrap {
-            overflow-x: auto;
-            max-height: 420px;
             overflow-y: auto;
-            border-radius: 6px;
-            border: 1px solid #222;
+            padding: 18px 16px;
         }
+        .sidebar-scroll::-webkit-scrollbar { width: 8px; }
+        .sidebar-scroll::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 8px; }
 
-        table.history-table {
-            width: 100%;
-            border-collapse: collapse;
+        .panel-section { display: none; animation: fadeIn 0.25s ease; }
+        .panel-section.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+        .section-label {
             font-size: 11px;
-            min-width: 280px;
-        }
-        table.history-table thead th {
-            background: #1a1a2e;
-            color: #888;
+            font-weight: 700;
             text-transform: uppercase;
-            font-size: 10px;
-            letter-spacing: 0.4px;
-            padding: 7px 8px;
-            text-align: left;
-            position: sticky;
-            top: 0;
-            z-index: 1;
-            white-space: nowrap;
+            letter-spacing: 0.08em;
+            color: var(--text-2);
+            margin-bottom: 8px;
         }
-        table.history-table tbody tr {
-            border-bottom: 1px solid #1a1a1a;
-            transition: background 0.15s;
+        .hint {
+            font-size: 12.5px;
+            color: var(--text-1);
+            line-height: 1.55;
+            margin-bottom: 16px;
         }
-        table.history-table tbody tr:hover { background: rgba(255,255,255,0.04); }
-        table.history-table tbody td {
-            padding: 7px 8px;
-            color: #ccc;
-            vertical-align: top;
+
+        /* Coordinate inputs */
+        .coord-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr auto;
+            gap: 8px;
+            margin-bottom: 12px;
         }
-        table.history-table tbody td.col-type {
-            font-size: 10px;
-            color: #888;
+        .field {
+            background: var(--bg-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--accent);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12.5px;
+            padding: 10px 11px;
+            outline: none;
+            transition: border-color 0.18s;
+            width: 100%;
         }
-        table.history-table tbody td.col-loc {
-            font-size: 10px;
-            color: #aaa;
-            font-family: monospace;
-            white-space: nowrap;
-        }
-        table.history-table tbody td.col-del {
-            text-align: center;
-        }
-        .del-btn {
-            background: none;
+        .field::placeholder { color: var(--text-2); }
+        .field:focus { border-color: var(--accent); }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
             border: none;
-            color: #555;
+            border-radius: var(--radius-sm);
+            font-family: inherit;
+            font-weight: 600;
+            font-size: 13.5px;
+            padding: 12px 16px;
             cursor: pointer;
-            width: auto;
-            padding: 2px 6px;
-            margin: 0;
-            font-size: 14px;
-            line-height: 1;
-            border-radius: 4px;
-            transition: color 0.15s, background 0.15s;
+            transition: all 0.18s ease;
+            width: 100%;
+            color: #fff;
         }
-        .del-btn:hover { color: #ff4d4d; background: rgba(255,77,77,0.1); }
+        .btn:active { transform: translateY(1px); }
+        .btn-primary { background: linear-gradient(135deg, var(--accent-dk), var(--accent)); color: #05201d; font-weight: 700; }
+        .btn-primary:hover { filter: brightness(1.08); box-shadow: 0 6px 18px rgba(45,212,191,0.25); }
+        .btn-upload  { background: linear-gradient(135deg, #2563eb, var(--blue)); }
+        .btn-upload:hover { filter: brightness(1.08); box-shadow: 0 6px 18px rgba(59,130,246,0.25); }
+        .btn-ghost {
+            background: var(--bg-2);
+            color: var(--text-1);
+            border: 1px solid var(--border);
+            font-size: 12.5px;
+            padding: 9px 12px;
+        }
+        .btn-ghost:hover { background: var(--bg-3); color: var(--text-0); }
+        .btn-danger { background: var(--bg-2); color: var(--sev-critical); border: 1px solid rgba(244,63,94,0.25); font-size: 12.5px; padding: 9px 12px; }
+        .btn-danger:hover { background: rgba(244,63,94,0.12); }
+        .btn-icon-sm {
+            width: auto; padding: 8px 12px; font-size: 12px;
+            background: var(--bg-2); color: var(--text-1); border: 1px solid var(--border);
+        }
+        .btn-icon-sm:hover { background: var(--bg-3); color: var(--text-0); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; filter: none !important; box-shadow: none !important; transform: none !important; }
 
-        .empty-history {
+        .target-readout {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-1);
+            background: var(--bg-2);
+            border: 1px dashed var(--border-2);
+            border-radius: var(--radius-sm);
+            padding: 10px 12px;
+            margin-bottom: 12px;
+        }
+        .target-readout.set { color: var(--accent); border-style: solid; }
+
+        /* File input */
+        .file-drop {
+            position: relative;
+            border: 1.5px dashed var(--border-2);
+            border-radius: var(--radius-sm);
+            padding: 22px 14px;
             text-align: center;
-            color: #444;
-            font-size: 13px;
-            padding: 30px 0;
+            cursor: pointer;
+            transition: all 0.18s;
+            margin-bottom: 12px;
         }
+        .file-drop:hover { border-color: var(--accent); background: var(--bg-2); }
+        .file-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+        .file-drop-icon { font-size: 26px; margin-bottom: 6px; }
+        .file-drop-text { font-size: 12.5px; color: var(--text-1); }
+        .file-drop-name { font-size: 12px; color: var(--accent); font-family: 'JetBrains Mono', monospace; margin-top: 6px; word-break: break-all; }
 
-        /* Severity badges in table — compact */
-        .tbadge {
-            display: inline-block;
-            padding: 1px 7px;
-            border-radius: 8px;
-            font-size: 10px;
-            font-weight: bold;
-            white-space: nowrap;
+        /* Status / loader */
+        .status-box {
+            margin-top: 14px;
+            font-size: 12.5px;
+            color: var(--text-1);
+            line-height: 1.55;
+            min-height: 18px;
+        }
+        .loader {
+            display: none;
+            align-items: center;
+            gap: 11px;
+            margin-top: 14px;
+            padding: 13px 14px;
+            background: var(--bg-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+        }
+        .loader.show { display: flex; }
+        .spinner {
+            width: 20px; height: 20px;
+            border: 2.5px solid var(--bg-3);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            flex-shrink: 0;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loader-text { font-size: 12.5px; color: var(--text-0); font-weight: 500; }
+
+        /* ── Summary Card ──────────────────────────────────────────── */
+        #summary-card {
+            display: none;
+            margin-top: 18px;
+            background: var(--bg-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+        .summary-banner {
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+        }
+        .summary-banner .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-2); font-weight: 700; }
+        .sev-pill {
+            padding: 5px 14px;
+            border-radius: 20px;
+            font-size: 12.5px;
+            font-weight: 700;
+        }
+        .sev-none-bg     { background: var(--bg-3); color: var(--text-1); }
+        .sev-low-bg      { background: rgba(52,211,153,0.15);  color: var(--sev-low); }
+        .sev-medium-bg   { background: rgba(251,191,36,0.15);  color: var(--sev-medium); }
+        .sev-high-bg     { background: rgba(251,146,60,0.15);  color: var(--sev-high); }
+        .sev-critical-bg { background: rgba(244,63,94,0.15);   color: var(--sev-critical); }
+
+        .summary-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1px;
+            background: var(--border);
+        }
+        .stat {
+            background: var(--bg-2);
+            padding: 16px;
+        }
+        .stat .num { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; color: var(--text-0); line-height: 1; }
+        .stat .unit { font-size: 13px; font-weight: 600; color: var(--text-2); }
+        .stat .cap { font-size: 11px; color: var(--text-2); margin-top: 5px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+        .breakdown { padding: 14px 16px; display: flex; flex-wrap: wrap; gap: 7px; }
+        .chip {
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 20px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .chip::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+        .chip-low      { background: rgba(52,211,153,0.12);  color: var(--sev-low); }
+        .chip-medium   { background: rgba(251,191,36,0.12);  color: var(--sev-medium); }
+        .chip-high     { background: rgba(251,146,60,0.12);  color: var(--sev-high); }
+        .chip-critical { background: rgba(244,63,94,0.12);   color: var(--sev-critical); }
+
+        /* ── History ───────────────────────────────────────────────── */
+        .history-toolbar { display: flex; gap: 8px; margin-bottom: 14px; }
+        .history-toolbar .btn { flex: 1; }
+        #history-status { font-size: 12px; color: var(--text-2); margin-bottom: 12px; }
+
+        .history-list { display: flex; flex-direction: column; gap: 8px; }
+        .hist-card {
+            background: var(--bg-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 12px 13px;
+            transition: all 0.16s;
+            position: relative;
+        }
+        .hist-card:hover { border-color: var(--border-2); background: var(--bg-3); }
+        .hist-card.clickable { cursor: pointer; }
+        .hist-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+        .hist-type { font-size: 11.5px; font-weight: 600; color: var(--text-1); display: flex; align-items: center; gap: 6px; }
+        .hist-time { font-size: 10.5px; color: var(--text-2); font-family: 'JetBrains Mono', monospace; }
+        .hist-loc { font-size: 11.5px; color: var(--text-1); font-family: 'JetBrains Mono', monospace; margin-bottom: 9px; word-break: break-all; }
+        .hist-meta { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--text-1); }
+        .hist-meta b { color: var(--text-0); }
+        .hist-del {
+            position: absolute; top: 10px; right: 10px;
+            width: 24px; height: 24px;
+            display: grid; place-items: center;
+            background: transparent; border: none; border-radius: 6px;
+            color: var(--text-2); cursor: pointer; font-size: 14px;
+            transition: all 0.15s; opacity: 0;
+        }
+        .hist-card:hover .hist-del { opacity: 1; }
+        .hist-del:hover { background: rgba(244,63,94,0.12); color: var(--sev-critical); }
+        .hist-badge { padding: 2px 9px; border-radius: 12px; font-size: 10.5px; font-weight: 700; }
+
+        .empty-state { text-align: center; padding: 40px 16px; color: var(--text-2); }
+        .empty-state .icon { font-size: 30px; margin-bottom: 10px; opacity: 0.6; }
+        .empty-state .msg { font-size: 12.5px; }
+
+        /* ── Map ───────────────────────────────────────────────────── */
+        main { grid-area: map; position: relative; }
+        #disaster-map { height: 100%; width: 100%; background: var(--bg-0); }
+        .leaflet-container { background: var(--bg-0); }
+
+        /* Map overlays */
+        .map-overlay {
+            position: absolute;
+            z-index: 900;
+            background: rgba(17,23,37,0.92);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            box-shadow: var(--shadow);
+        }
+        /* Legend */
+        #legend { bottom: 24px; left: 24px; padding: 13px 15px; }
+        #legend .legend-title { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-2); margin-bottom: 10px; }
+        .legend-row { display: flex; align-items: center; gap: 9px; margin-bottom: 7px; font-size: 12px; color: var(--text-1); }
+        .legend-row:last-child { margin-bottom: 0; }
+        .legend-swatch { width: 15px; height: 15px; border-radius: 4px; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.15); }
+
+        /* Basemap toggle */
+        #basemap-toggle { top: 18px; right: 18px; display: flex; padding: 4px; gap: 3px; }
+        .bm-btn {
+            padding: 7px 13px; font-size: 12px; font-weight: 600;
+            background: transparent; border: none; border-radius: 7px;
+            color: var(--text-2); cursor: pointer; transition: all 0.16s;
+        }
+        .bm-btn:hover { color: var(--text-1); }
+        .bm-btn.active { background: var(--bg-3); color: var(--accent); }
+
+        /* Toast */
+        #toast-wrap {
+            position: fixed; top: 68px; left: 50%; transform: translateX(-50%);
+            z-index: 2000; display: flex; flex-direction: column; gap: 8px; align-items: center;
+            pointer-events: none;
+        }
+        .toast {
+            display: flex; align-items: center; gap: 10px;
+            padding: 11px 16px;
+            background: var(--bg-2);
+            border: 1px solid var(--border-2);
+            border-radius: var(--radius-sm);
+            box-shadow: var(--shadow);
+            font-size: 13px; font-weight: 500; color: var(--text-0);
+            animation: toastIn 0.25s ease;
+            max-width: 90vw;
+        }
+        .toast.err  { border-color: rgba(244,63,94,0.4); }
+        .toast.ok   { border-color: rgba(45,212,191,0.4); }
+        .toast.warn { border-color: rgba(251,191,36,0.4); }
+        @keyframes toastIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+        @keyframes toastOut { to { opacity: 0; transform: translateY(-8px); } }
+
+        /* Responsive */
+        @media (max-width: 820px) {
+            #app { grid-template-columns: 1fr; grid-template-rows: 56px 44vh 1fr; grid-template-areas: "header" "map" "sidebar"; }
+            aside { border-right: none; border-top: 1px solid var(--border); }
+            .brand small { display: none; }
         }
     </style>
 </head>
 <body>
 
-<div id="disaster-map"></div>
+<div id="app">
+    <!-- ══ Header ══ -->
+    <header>
+        <div class="brand">
+            <div class="brand-logo">🛰️</div>
+            <div>
+                FloodWatch AI
+                <small>Disaster Management · Deep Learning</small>
+            </div>
+        </div>
+        <div class="header-spacer"></div>
+        <div class="engine-status">
+            <span class="status-dot" id="engine-dot"></span>
+            <span id="engine-label">Checking engine…</span>
+        </div>
+    </header>
 
-<div id="control-panel">
-    <h3>🛰️ Disaster Management AI</h3>
-
-    <div class="tab-bar">
-        <div class="tab active" onclick="switchTab('live')">📡 Live Scan</div>
-        <div class="tab" onclick="switchTab('upload')">📁 Upload TIF</div>
-        <div class="tab" onclick="switchTab('history')">📋 History</div>
-    </div>
-
-    <!-- ── Live Scan ── -->
-    <div id="live-section" class="panel-section active">
-        <p class="hint-text">Click anywhere on the map to set a target area (~10km × 10km), then run the scan.</p>
-
-        <!-- Manual coordinate entry — type a lat/lng and jump straight to it -->
-        <div class="coord-row">
-            <input type="number" id="inputLat" placeholder="Lat  e.g. 19.9587" step="any">
-            <input type="number" id="inputLng" placeholder="Lng  e.g. 76.7285" step="any">
-            <button class="btn-jump" onclick="jumpToCoords()">▶ Go</button>
+    <!-- ══ Sidebar ══ -->
+    <aside>
+        <div class="tabs">
+            <button class="tab active" data-tab="live"     onclick="switchTab('live')">📡 Scan</button>
+            <button class="tab"        data-tab="livedata" onclick="switchTab('livedata')">🌐 Live Data</button>
+            <button class="tab"        data-tab="upload"   onclick="switchTab('upload')">📁 Upload</button>
+            <button class="tab"        data-tab="history"  onclick="switchTab('history')">📋 History</button>
         </div>
 
-        <div id="target-coords">Target: Not Selected</div>
-        <button id="liveScanBtn" class="btn-scan">🔍 Run Live Satellite Scan</button>
-    </div>
+        <div class="sidebar-scroll">
+            <!-- Live -->
+            <section id="live-section" class="panel-section active">
+                <div class="section-label">Target Location</div>
+                <p class="hint">Click anywhere on the map to drop a ~10 × 10 km scan area, or type coordinates below.</p>
+                <div class="coord-grid">
+                    <input type="number" id="inputLat" class="field" placeholder="Lat" step="any">
+                    <input type="number" id="inputLng" class="field" placeholder="Lng" step="any">
+                    <button class="btn btn-ghost" style="width:auto" onclick="jumpToCoords()">Go</button>
+                </div>
+                <div class="target-readout" id="target-readout">
+                    <span>◎</span><span id="target-text">No target selected</span>
+                </div>
+                <button id="liveScanBtn" class="btn btn-primary">🔍 Run Live Satellite Scan</button>
 
-    <!-- ── Upload ── -->
-    <div id="upload-section" class="panel-section">
-        <p class="hint-text">Upload a 2-band Sentinel-1 GeoTIFF (VV + VH, dB scale).</p>
-        <input type="file" id="imageInput" accept=".tif,.tiff">
-        <button id="analyzeBtn" class="btn-upload">⚡ Run Local File Analysis</button>
-    </div>
+                <div class="loader" id="live-loader">
+                    <div class="spinner"></div>
+                    <div class="loader-text" id="live-loader-text">Working…</div>
+                </div>
+                <div class="status-box" id="live-status">Ready. Select a target to begin.</div>
+            </section>
 
-    <!-- ── History ── -->
-    <div id="history-section" class="panel-section">
-        <div class="history-toolbar">
-            <button class="btn-secondary" onclick="loadHistory()">🔄 Refresh</button>
-            <button class="btn-danger"    onclick="clearAllHistory()">🗑️ Clear All</button>
-        </div>
-        <div id="history-status">Loading...</div>
-        <div class="history-table-wrap">
-            <table class="history-table" id="history-table">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Time</th>
-                        <th>Type</th>
-                        <th>Location / File</th>
-                        <th>Zones</th>
-                        <th>Area</th>
-                        <th>Severity</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody id="history-body">
-                    <tr><td colspan="8" class="empty-history">No scans yet.</td></tr>
-                </tbody>
-            </table>
-        </div>
-    </div>
+            <!-- Upload -->
+            <section id="upload-section" class="panel-section">
+                <div class="section-label">Upload GeoTIFF</div>
+                <p class="hint">Upload a 2-band Sentinel-1 GeoTIFF (VV + VH, dB scale).</p>
+                <label class="file-drop" id="file-drop">
+                    <input type="file" id="imageInput" accept=".tif,.tiff">
+                    <div class="file-drop-icon">📂</div>
+                    <div class="file-drop-text">Click to choose a <b>.tif</b> file</div>
+                    <div class="file-drop-name" id="file-name"></div>
+                </label>
+                <button id="analyzeBtn" class="btn btn-upload">⚡ Analyze File</button>
 
-    <div id="status">Waiting for input...</div>
+                <div class="loader" id="upload-loader">
+                    <div class="spinner"></div>
+                    <div class="loader-text" id="upload-loader-text">Running AI analysis…</div>
+                </div>
+                <div class="status-box" id="upload-status">Ready. Choose a file to analyze.</div>
+            </section>
 
-    <!-- ── Summary Panel (shown after scan result) ── -->
-    <div id="summary-panel">
-        <h4>📊 Detection Summary</h4>
-        <div class="summary-row">
-            <span>Flood Zones Detected</span>
-            <span id="sum-zones">—</span>
+            <!-- Live Data (real-world floods from GDACS) -->
+            <section id="livedata-section" class="panel-section">
+                <div class="section-label">Real-World Floods · Live</div>
+                <p class="hint">Currently active floods worldwide, from <b>GDACS</b> (UN/EU Global Disaster Alert System). Click any event to draw its real affected-area shape on the map.</p>
+                <div class="history-toolbar">
+                    <button class="btn btn-ghost" onclick="loadLiveFloods()">🔄 Refresh Feed</button>
+                </div>
+                <div id="livedata-status">Click refresh to load live floods.</div>
+                <div class="history-list" id="livedata-list"></div>
+            </section>
+
+            <!-- History -->
+            <section id="history-section" class="panel-section">
+                <div class="history-toolbar">
+                    <button class="btn btn-ghost"  onclick="loadHistory()">🔄 Refresh</button>
+                    <button class="btn btn-danger" onclick="clearAllHistory()">🗑️ Clear All</button>
+                </div>
+                <div id="history-status">Loading…</div>
+                <div class="history-list" id="history-list"></div>
+            </section>
+
+            <!-- Shared summary card (lives under scan tabs) -->
+            <div id="summary-card">
+                <div class="summary-banner">
+                    <span class="label">Detection Result</span>
+                    <span class="sev-pill sev-none-bg" id="sum-severity">None</span>
+                </div>
+                <div class="summary-stats">
+                    <div class="stat">
+                        <div><span class="num" id="sum-area">0</span> <span class="unit">km²</span></div>
+                        <div class="cap">Flooded Area</div>
+                    </div>
+                    <div class="stat">
+                        <div><span class="num" id="sum-zones">0</span></div>
+                        <div class="cap">Flood Zones</div>
+                    </div>
+                </div>
+                <div class="breakdown" id="breakdown"></div>
+            </div>
         </div>
-        <div class="summary-row">
-            <span>Total Flooded Area</span>
-            <span id="sum-area">—</span>
+    </aside>
+
+    <!-- ══ Map ══ -->
+    <main>
+        <div id="disaster-map"></div>
+
+        <div class="map-overlay" id="basemap-toggle">
+            <button class="bm-btn active" data-bm="satellite" onclick="setBasemap('satellite')">Satellite</button>
+            <button class="bm-btn"        data-bm="streets"   onclick="setBasemap('streets')">Streets</button>
         </div>
-        <div class="summary-row">
-            <span>Overall Severity</span>
-            <span id="sum-severity">—</span>
+
+        <div class="map-overlay" id="legend">
+            <div class="legend-title">Flood Severity</div>
+            <div class="legend-row"><span class="legend-swatch" style="background:#34d399"></span>Low · &lt; 0.1 km²</div>
+            <div class="legend-row"><span class="legend-swatch" style="background:#fbbf24"></span>Medium · &lt; 1 km²</div>
+            <div class="legend-row"><span class="legend-swatch" style="background:#fb923c"></span>High · &lt; 10 km²</div>
+            <div class="legend-row"><span class="legend-swatch" style="background:#f43f5e"></span>Critical · ≥ 10 km²</div>
         </div>
-        <div class="danger-breakdown" id="danger-breakdown"></div>
-    </div>
+    </main>
 </div>
 
+<div id="toast-wrap"></div>
+
 <script>
-// ────────────────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════
 // Map setup
-// ────────────────────────────────────────────────────────────────────────────
-var map = L.map('disaster-map').setView([20, 0], 3);
-L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19,
-    attribution: 'Tiles &copy; Esri'
-}).addTo(map);
+// ════════════════════════════════════════════════════════════════════
+const map = L.map('disaster-map', { zoomControl: false }).setView([20, 0], 3);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-var floodLayer   = L.layerGroup().addTo(map);
-var targetMarker = null;
-var selectedLat  = null;
-var selectedLng  = null;
+const basemaps = {
+    satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19, attribution: 'Tiles &copy; Esri'
+    }),
+    streets: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO'
+    })
+};
+basemaps.satellite.addTo(map);
+let currentBasemap = 'satellite';
 
-// Map click — set target for Live Scan
-map.on('click', function(e) {
+function setBasemap(name) {
+    if (name === currentBasemap) return;
+    map.removeLayer(basemaps[currentBasemap]);
+    basemaps[name].addTo(map);
+    currentBasemap = name;
+    document.querySelectorAll('.bm-btn').forEach(b => b.classList.toggle('active', b.dataset.bm === name));
+}
+
+const floodLayer    = L.layerGroup().addTo(map);
+const targetLayer   = L.layerGroup().addTo(map);
+const liveDataLayer = L.layerGroup().addTo(map);
+let selectedLat = null, selectedLng = null;
+
+// Draw the scan-box preview + marker
+function setTarget(lat, lng, fly) {
+    selectedLat = lat; selectedLng = lng;
+    targetLayer.clearLayers();
+
+    const offLat = 0.045;
+    const offLng = 10 / (111.32 * Math.cos(lat * Math.PI / 180)) / 2;
+    L.rectangle([[lat - offLat, lng - offLng], [lat + offLat, lng + offLng]], {
+        color: '#2dd4bf', weight: 1.5, fillOpacity: 0.06, dashArray: '5,5'
+    }).addTo(targetLayer);
+    L.circleMarker([lat, lng], { color: '#2dd4bf', radius: 6, weight: 3, fillOpacity: 0.3, fillColor: '#2dd4bf' }).addTo(targetLayer);
+
+    const r = document.getElementById('target-readout');
+    r.classList.add('set');
+    document.getElementById('target-text').textContent = `${lat.toFixed(4)}°, ${lng.toFixed(4)}°`;
+    if (fly) map.flyTo([lat, lng], 12, { duration: 1.1 });
+}
+
+map.on('click', e => {
     if (document.getElementById('live-section').classList.contains('active')) {
-        selectedLat = e.latlng.lat;
-        selectedLng = e.latlng.lng;
-
-        if (targetMarker) map.removeLayer(targetMarker);
-        targetMarker = L.circleMarker(e.latlng, {
-            color: '#00ffcc', radius: 8, weight: 3, fillOpacity: 0.2
-        }).addTo(map);
-
-        document.getElementById('target-coords').innerText =
-            `Target: ${selectedLat.toFixed(4)}°, ${selectedLng.toFixed(4)}°`;
+        setTarget(e.latlng.lat, e.latlng.lng, false);
     }
 });
 
-// ── Manual coordinate jump ───────────────────────────────────────────────────
-// Lets you type a lat/lng and set the target without clicking the map.
-// Useful for repeatedly testing the same location.
 function jumpToCoords() {
     const lat = parseFloat(document.getElementById('inputLat').value);
     const lng = parseFloat(document.getElementById('inputLng').value);
-
     if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-        alert('Enter a valid latitude (-90 to 90) and longitude (-180 to 180).');
-        return;
+        toast('Enter a valid lat (-90…90) and lng (-180…180).', 'err'); return;
     }
-
-    selectedLat = lat;
-    selectedLng = lng;
-
-    const latlng = L.latLng(lat, lng);
-
-    if (targetMarker) map.removeLayer(targetMarker);
-    targetMarker = L.circleMarker(latlng, {
-        color: '#00ffcc', radius: 8, weight: 3, fillOpacity: 0.2
-    }).addTo(map);
-
-    map.flyTo(latlng, 12, { duration: 1.2 });
-
-    document.getElementById('target-coords').innerText =
-        `Target: ${lat.toFixed(4)}°, ${lng.toFixed(4)}°`;
+    setTarget(lat, lng, true);
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Tab switching
-// ────────────────────────────────────────────────────────────────────────────
-function switchTab(tabId) {
-    const tabs     = document.querySelectorAll('.tab');
-    const sections = document.querySelectorAll('.panel-section');
-    tabs.forEach(t     => t.classList.remove('active'));
-    sections.forEach(s => s.classList.remove('active'));
-
-    const idx = { live: 0, upload: 1, history: 2 }[tabId];
-    tabs[idx].classList.add('active');
-    document.getElementById(tabId + '-section').classList.add('active');
-
-    // Auto-load history when the tab opens
-    if (tabId === 'history') loadHistory();
-
-    // Hide the summary when switching away from scan tabs
-    if (tabId === 'history') {
-        document.getElementById('summary-panel').style.display = 'none';
-        document.getElementById('status').innerText = '';
-    }
+// ════════════════════════════════════════════════════════════════════
+// Toasts
+// ════════════════════════════════════════════════════════════════════
+function toast(msg, kind = '', ms = 3400) {
+    const icons = { ok: '✅', err: '⚠️', warn: '⚡', '': 'ℹ️' };
+    const el = document.createElement('div');
+    el.className = 'toast ' + kind;
+    el.innerHTML = `<span>${icons[kind] ?? 'ℹ️'}</span><span>${msg}</span>`;
+    document.getElementById('toast-wrap').appendChild(el);
+    setTimeout(() => {
+        el.style.animation = 'toastOut 0.25s ease forwards';
+        setTimeout(() => el.remove(), 250);
+    }, ms);
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Danger level → polygon color
-// ────────────────────────────────────────────────────────────────────────────
-function dangerColor(level) {
-    return { Low: '#6dff6d', Medium: '#ffd24d', High: '#ff6d3a', Critical: '#ff3a5c' }[level] || '#ff4d4d';
+// ════════════════════════════════════════════════════════════════════
+// Tabs
+// ════════════════════════════════════════════════════════════════════
+function switchTab(id) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === id));
+    document.querySelectorAll('.panel-section').forEach(s => s.classList.remove('active'));
+    document.getElementById(id + '-section').classList.add('active');
+
+    const summary = document.getElementById('summary-card');
+    if (id === 'history')  { loadHistory();  summary.style.display = 'none'; }
+    if (id === 'livedata') { summary.style.display = 'none'; if (!liveFloodsLoaded) loadLiveFloods(); }
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Severity badge HTML (for summary panel)
-// ────────────────────────────────────────────────────────────────────────────
-function severityBadge(level, compact) {
-    const cls = {
-        None: 'sev-none', Low: 'sev-low',
-        Medium: 'sev-medium', High: 'sev-high', Critical: 'sev-critical'
-    }[level] || 'sev-none';
-    const klass = compact ? 'tbadge ' + cls : 'severity-badge ' + cls;
-    return `<span class="${klass}">${level || 'None'}</span>`;
-}
+// ════════════════════════════════════════════════════════════════════
+// Rendering AI results
+// ════════════════════════════════════════════════════════════════════
+const SEV_CLASS = { None:'sev-none-bg', Low:'sev-low-bg', Medium:'sev-medium-bg', High:'sev-high-bg', Critical:'sev-critical-bg' };
+const DANGER_COLOR = { Low:'#34d399', Medium:'#fbbf24', High:'#fb923c', Critical:'#f43f5e' };
 
-// ────────────────────────────────────────────────────────────────────────────
-// Render AI response (polygons + summary panel)
-// ────────────────────────────────────────────────────────────────────────────
-function renderAIResponse(geojsonData, statusEl) {
+function renderAIResponse(data, statusEl) {
     floodLayer.clearLayers();
-    document.getElementById('summary-panel').style.display = 'none';
+    const summary = document.getElementById('summary-card');
+    summary.style.display = 'none';
 
-    if (geojsonData.error && (!geojsonData.features || geojsonData.features.length === 0)) {
-        statusEl.innerHTML = `❌ ${geojsonData.error}`;
+    if (data.error && (!data.features || data.features.length === 0)) {
+        statusEl.textContent = '❌ ' + data.error;
+        toast(data.error, 'err');
+        return;
+    }
+    if (!data.features || data.features.length === 0) {
+        statusEl.textContent = '✅ Area clear — no flood zones detected.';
+        toast('Area clear — no flooding detected.', 'ok');
         return;
     }
 
-    if (!geojsonData.features || geojsonData.features.length === 0) {
-        statusEl.innerHTML = '✅ Area Clear — No flood zones detected.';
-        return;
-    }
-
-    const geoJsonLayer = L.geoJSON(geojsonData, {
-        style: function(feature) {
-            const color = dangerColor(feature.properties.danger_level);
-            return { color, weight: 2, fillOpacity: 0.45, fillColor: color };
+    const layer = L.geoJSON(data, {
+        style: f => {
+            const c = DANGER_COLOR[f.properties.danger_level] || '#f43f5e';
+            return { color: c, weight: 1.5, fillOpacity: 0.4, fillColor: c };
         },
-        onEachFeature: function(feature, layer) {
-            const p = feature.properties;
-            layer.bindPopup(
-                `<b>Flood Zone</b><br>
-                 Area: <b>${p.area_km2} km²</b><br>
-                 Severity: <b>${p.danger_level}</b>`
-            );
+        onEachFeature: (f, l) => {
+            const p = f.properties;
+            l.bindPopup(`<b>Flood Zone</b><br>Area: <b>${p.area_km2} km²</b><br>Severity: <b>${p.danger_level}</b>`);
         }
     }).addTo(floodLayer);
 
-    map.flyToBounds(geoJsonLayer.getBounds(), { padding: [50, 50], maxZoom: 14 });
-    statusEl.innerHTML = '✅ AI Detection Complete.';
+    map.flyToBounds(layer.getBounds(), { padding: [60, 60], maxZoom: 14 });
+    statusEl.textContent = '✅ Detection complete.';
 
-    // Populate summary panel
-    const s = geojsonData.summary;
+    const s = data.summary;
     if (s) {
-        document.getElementById('sum-zones').innerText = s.total_flood_zones;
-        document.getElementById('sum-area').innerText  = `${s.total_area_km2} km²`;
-        document.getElementById('sum-severity').innerHTML = severityBadge(s.overall_severity, false);
+        document.getElementById('sum-area').textContent  = s.total_area_km2;
+        document.getElementById('sum-zones').textContent = s.total_flood_zones;
+        const pill = document.getElementById('sum-severity');
+        pill.textContent = s.overall_severity;
+        pill.className = 'sev-pill ' + (SEV_CLASS[s.overall_severity] || 'sev-none-bg');
 
-        const breakdown  = document.getElementById('danger-breakdown');
-        breakdown.innerHTML = '';
-        const chipClass = { Low: 'chip-low', Medium: 'chip-medium', High: 'chip-high', Critical: 'chip-critical' };
-        for (const [level, count] of Object.entries(s.danger_breakdown)) {
-            if (count > 0) {
-                breakdown.innerHTML += `<span class="danger-chip ${chipClass[level]}">${level}: ${count}</span>`;
-            }
+        const bd = document.getElementById('breakdown');
+        bd.innerHTML = '';
+        const chipCls = { Low:'chip-low', Medium:'chip-medium', High:'chip-high', Critical:'chip-critical' };
+        for (const [lvl, n] of Object.entries(s.danger_breakdown)) {
+            if (n > 0) bd.innerHTML += `<span class="chip ${chipCls[lvl]}">${lvl}: ${n}</span>`;
         }
-        document.getElementById('summary-panel').style.display = 'block';
+        summary.style.display = 'block';
+        toast(`${s.total_flood_zones} flood zone(s) · ${s.overall_severity} severity`, 'warn');
     }
 }
 
-// ────────────────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════
 // Live Scan
-// ────────────────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════
+const liveSteps = [
+    'Querying Microsoft Planetary Computer…',
+    'Downloading Sentinel-1 radar imagery…',
+    'Running U-Net flood model…',
+    'Filtering ocean & permanent water…'
+];
 document.getElementById('liveScanBtn').addEventListener('click', async () => {
-    if (selectedLat === null) {
-        alert('Click on the map to select a target area first.');
-        return;
-    }
+    if (selectedLat === null) { toast('Click the map to select a target first.', 'err'); return; }
 
-    const btn      = document.getElementById('liveScanBtn');
-    const statusEl = document.getElementById('status');
-    btn.disabled   = true;
-    statusEl.innerHTML = '⏳ Querying Microsoft Planetary Computer for Sentinel-1 data...';
-    document.getElementById('summary-panel').style.display = 'none';
+    const btn = document.getElementById('liveScanBtn');
+    const loader = document.getElementById('live-loader');
+    const loaderText = document.getElementById('live-loader-text');
+    const statusEl = document.getElementById('live-status');
+    btn.disabled = true;
+    loader.classList.add('show');
+    statusEl.textContent = '';
+    document.getElementById('summary-card').style.display = 'none';
 
-    // Build ~10km × 10km bounding box around the clicked point
-    const offsetLat = 0.045;
-    const offsetLng = 10 / (111.32 * Math.cos(selectedLat * Math.PI / 180)) / 2;
-    const bbox = [
-        selectedLng - offsetLng,
-        selectedLat - offsetLat,
-        selectedLng + offsetLng,
-        selectedLat + offsetLat,
-    ];
+    let step = 0;
+    loaderText.textContent = liveSteps[0];
+    const stepTimer = setInterval(() => {
+        step = Math.min(step + 1, liveSteps.length - 1);
+        loaderText.textContent = liveSteps[step];
+    }, 2500);
+
+    const offLat = 0.045;
+    const offLng = 10 / (111.32 * Math.cos(selectedLat * Math.PI / 180)) / 2;
+    const bbox = [selectedLng - offLng, selectedLat - offLat, selectedLng + offLng, selectedLat + offLat];
 
     try {
-        const response = await fetch('/api/live-analyze', {
-            method:  'POST',
+        const res = await fetch('/api/live-analyze', {
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            // Send bbox AND the centre point — server logs it to history
-            body: JSON.stringify({ bbox, lat: selectedLat, lng: selectedLng }),
+            body: JSON.stringify({ bbox, lat: selectedLat, lng: selectedLng })
         });
-        const data = await response.json();
+        const data = await res.json();
         renderAIResponse(data, statusEl);
-    } catch (err) {
-        statusEl.innerHTML = '❌ Error connecting to backend.';
+    } catch {
+        statusEl.textContent = '❌ Could not reach the backend.';
+        toast('Could not reach the backend server.', 'err');
     } finally {
+        clearInterval(stepTimer);
+        loader.classList.remove('show');
         btn.disabled = false;
     }
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// Upload & Analyze
-// ────────────────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════
+// Upload
+// ════════════════════════════════════════════════════════════════════
+document.getElementById('imageInput').addEventListener('change', e => {
+    const f = e.target.files[0];
+    document.getElementById('file-name').textContent = f ? f.name : '';
+});
+
 document.getElementById('analyzeBtn').addEventListener('click', async () => {
     const fileInput = document.getElementById('imageInput');
-    const statusEl  = document.getElementById('status');
+    const statusEl = document.getElementById('upload-status');
+    if (fileInput.files.length === 0) { toast('Choose a .tif file first.', 'err'); return; }
 
-    if (fileInput.files.length === 0) {
-        alert('Please select a .tif file first.');
-        return;
-    }
-
-    const btn    = document.getElementById('analyzeBtn');
+    const btn = document.getElementById('analyzeBtn');
+    const loader = document.getElementById('upload-loader');
     btn.disabled = true;
-    statusEl.innerHTML = '⏳ Running AI analysis on uploaded file...';
-    document.getElementById('summary-panel').style.display = 'none';
+    loader.classList.add('show');
+    statusEl.textContent = '';
+    document.getElementById('summary-card').style.display = 'none';
 
-    const formData = new FormData();
-    formData.append('satelliteImage', fileInput.files[0]);
+    const fd = new FormData();
+    fd.append('satelliteImage', fileInput.files[0]);
 
     try {
-        const response = await fetch('/api/analyze-satellite', { method: 'POST', body: formData });
-        const data = await response.json();
+        const res = await fetch('/api/analyze-satellite', { method: 'POST', body: fd });
+        const data = await res.json();
         renderAIResponse(data, statusEl);
-    } catch (err) {
-        statusEl.innerHTML = '❌ Error in AI pipeline.';
+    } catch {
+        statusEl.textContent = '❌ Error in AI pipeline.';
+        toast('Error running the AI pipeline.', 'err');
     } finally {
+        loader.classList.remove('show');
         btn.disabled = false;
     }
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// History Tab
-// ────────────────────────────────────────────────────────────────────────────
-
-/** Format ISO timestamp → readable local string */
-function fmtTime(isoStr) {
+// ════════════════════════════════════════════════════════════════════
+// History
+// ════════════════════════════════════════════════════════════════════
+function fmtTime(iso) {
     try {
-        const d = new Date(isoStr);
-        return d.toLocaleString('en-IN', {
-            day: '2-digit', month: 'short', year: 'numeric',
-            hour: '2-digit', minute: '2-digit', hour12: false
-        });
-    } catch { return isoStr; }
-}
-
-/** Format lat/lng or filename into a short display string */
-function fmtLocation(row) {
-    if (row.scan_type === 'upload') {
-        return row.filename ? `📁 ${row.filename}` : '—';
-    }
-    if (row.lat !== null && row.lng !== null) {
-        return `${parseFloat(row.lat).toFixed(3)}°, ${parseFloat(row.lng).toFixed(3)}°`;
-    }
-    return '—';
+        return new Date(iso).toLocaleString('en-IN', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', hour12:false });
+    } catch { return iso; }
 }
 
 async function loadHistory() {
     const statusEl = document.getElementById('history-status');
-    const tbody    = document.getElementById('history-body');
-    statusEl.textContent = 'Loading...';
-
+    const list = document.getElementById('history-list');
+    statusEl.textContent = 'Loading…';
     try {
-        const res  = await fetch('/api/history');
+        const res = await fetch('/api/history');
         const rows = await res.json();
-
         if (!Array.isArray(rows) || rows.length === 0) {
-            statusEl.textContent = 'No scans recorded yet.';
-            tbody.innerHTML = `<tr><td colspan="8" class="empty-history">Run a scan to see it here.</td></tr>`;
+            statusEl.textContent = '';
+            list.innerHTML = `<div class="empty-state"><div class="icon">🗂️</div><div class="msg">No scans yet. Run a scan to see it here.</div></div>`;
             return;
         }
-
         statusEl.textContent = `${rows.length} scan${rows.length > 1 ? 's' : ''} on record.`;
-
-        tbody.innerHTML = rows.map(row => {
-            const sev    = row.severity || 'None';
-            const sevCls = { None: 'sev-none', Low: 'sev-low', Medium: 'sev-medium', High: 'sev-high', Critical: 'sev-critical' }[sev] || 'sev-none';
-            const typeIcon = row.scan_type === 'live' ? '📡' : '📁';
-
-            return `<tr>
-                <td>${row.id}</td>
-                <td style="white-space:nowrap;font-size:10px">${fmtTime(row.timestamp)}</td>
-                <td class="col-type">${typeIcon} ${row.scan_type}</td>
-                <td class="col-loc" title="${fmtLocation(row)}">${fmtLocation(row)}</td>
-                <td style="text-align:center">${row.zones}</td>
-                <td style="white-space:nowrap">${row.area_km2} km²</td>
-                <td><span class="tbadge ${sevCls}">${sev}</span></td>
-                <td class="col-del">
-                    <button class="del-btn" onclick="deleteScanRow(${row.id})" title="Delete this scan">✕</button>
-                </td>
-            </tr>`;
+        list.innerHTML = rows.map(row => {
+            const sev = row.severity || 'None';
+            const sevCls = SEV_CLASS[sev] || 'sev-none-bg';
+            const isLive = row.scan_type === 'live';
+            const icon = isLive ? '📡' : '📁';
+            const loc = isLive
+                ? (row.lat != null ? `${(+row.lat).toFixed(3)}°, ${(+row.lng).toFixed(3)}°` : '—')
+                : (row.filename || '—');
+            const clickable = isLive && row.lat != null;
+            return `<div class="hist-card ${clickable ? 'clickable' : ''}" ${clickable ? `onclick="flyToScan(${row.lat},${row.lng})"` : ''}>
+                <button class="hist-del" onclick="event.stopPropagation();deleteScanRow(${row.id})" title="Delete">✕</button>
+                <div class="hist-top">
+                    <span class="hist-type">${icon} ${isLive ? 'Live Scan' : 'Upload'}</span>
+                    <span class="hist-time">${fmtTime(row.timestamp)}</span>
+                </div>
+                <div class="hist-loc">${loc}</div>
+                <div class="hist-meta">
+                    <span><b>${row.zones}</b> zones</span>
+                    <span><b>${row.area_km2}</b> km²</span>
+                    <span class="hist-badge ${sevCls}">${sev}</span>
+                </div>
+            </div>`;
         }).join('');
-
     } catch (err) {
         statusEl.textContent = '❌ Failed to load history.';
         console.error(err);
     }
 }
 
+function flyToScan(lat, lng) {
+    switchTab('live');
+    document.querySelector('.tab[data-tab="live"]').classList.add('active');
+    setTarget(lat, lng, true);
+    toast('Jumped to past scan location.', 'ok', 2000);
+}
+
 async function deleteScanRow(id) {
-    if (!confirm(`Delete scan #${id} from history?`)) return;
+    if (!confirm(`Delete scan #${id}?`)) return;
     try {
         const res = await fetch(`/api/history/${id}`, { method: 'DELETE' });
-        if (res.ok) loadHistory();
-        else alert('Failed to delete scan.');
-    } catch (err) {
-        alert('Network error while deleting.');
-    }
+        if (res.ok) { loadHistory(); toast('Scan deleted.', 'ok', 1800); }
+        else toast('Failed to delete scan.', 'err');
+    } catch { toast('Network error while deleting.', 'err'); }
 }
 
 async function clearAllHistory() {
     if (!confirm('Delete ALL scan history? This cannot be undone.')) return;
     try {
         const res = await fetch('/api/history', { method: 'DELETE' });
-        if (res.ok) loadHistory();
-        else alert('Failed to clear history.');
+        if (res.ok) { loadHistory(); toast('History cleared.', 'ok', 1800); }
+        else toast('Failed to clear history.', 'err');
+    } catch { toast('Network error while clearing.', 'err'); }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Live Data — real-world floods from GDACS
+// ════════════════════════════════════════════════════════════════════
+let liveFloodsLoaded = false;
+const ALERT_COLOR = { Red: '#f43f5e', Orange: '#fb923c', Green: '#34d399' };
+
+function fmtDate(iso) {
+    try { return new Date(iso).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }); }
+    catch { return iso; }
+}
+
+async function loadLiveFloods() {
+    const statusEl = document.getElementById('livedata-status');
+    const list = document.getElementById('livedata-list');
+    statusEl.textContent = '⏳ Fetching live floods from GDACS…';
+    list.innerHTML = '';
+    liveDataLayer.clearLayers();
+
+    try {
+        const res = await fetch('/api/live-floods');
+        const data = await res.json();
+        if (!res.ok || !data.features) throw new Error(data.error || 'Bad feed');
+
+        // Newest first by modified date
+        const feats = data.features.slice().sort((a, b) =>
+            new Date(b.properties.datemodified) - new Date(a.properties.datemodified));
+
+        if (feats.length === 0) {
+            statusEl.textContent = '';
+            list.innerHTML = `<div class="empty-state"><div class="icon">🌐</div><div class="msg">No active floods reported right now.</div></div>`;
+            return;
+        }
+
+        statusEl.textContent = `${feats.length} active flood event${feats.length > 1 ? 's' : ''} worldwide.`;
+
+        // Drop a colored marker for every event
+        feats.forEach(f => {
+            const [lng, lat] = f.geometry.coordinates;
+            const p = f.properties;
+            const color = ALERT_COLOR[p.alertlevel] || '#3b82f6';
+            L.circleMarker([lat, lng], { color, radius: 8, weight: 3, fillOpacity: 0.5, fillColor: color })
+                .addTo(liveDataLayer)
+                .bindPopup(`<b>${p.name}</b><br>Alert: <b>${p.alertlevel}</b><br>${fmtDate(p.fromdate)} → ${fmtDate(p.todate)}<br>Source: ${p.source || 'GDACS'}`);
+        });
+
+        // Build the sidebar list with text
+        list.innerHTML = feats.map(f => {
+            const p = f.properties;
+            const [lng, lat] = f.geometry.coordinates;
+            const color = ALERT_COLOR[p.alertlevel] || '#3b82f6';
+            const alertCls = { Red:'sev-critical-bg', Orange:'sev-high-bg', Green:'sev-low-bg' }[p.alertlevel] || 'sev-none-bg';
+            // GDACS htmldescription is a clean one-liner like "Red Flood in China from: ... to: ..."
+            const desc = (p.htmldescription || p.description || '').replace(/<[^>]*>/g, '');
+            return `<div class="hist-card clickable" onclick="showFloodShape(${p.eventid},${p.episodeid},${lat},${lng},'${(p.name||'').replace(/'/g,"\\'")}','${p.alertlevel}')">
+                <div class="hist-top">
+                    <span class="hist-type"><span style="width:9px;height:9px;border-radius:50%;background:${color};display:inline-block"></span> ${p.name || 'Flood'}</span>
+                    <span class="hist-badge ${alertCls}">${p.alertlevel}</span>
+                </div>
+                <div class="hist-loc">📍 ${p.country || '—'} · ${lat.toFixed(2)}°, ${lng.toFixed(2)}°</div>
+                <div class="hist-meta" style="display:block;line-height:1.5;color:var(--text-1)">${desc}</div>
+                <div class="hist-meta" style="margin-top:8px;font-size:11px;color:var(--text-2)">🖱️ Click to draw affected area · Source: ${p.source || 'GDACS'}</div>
+            </div>`;
+        }).join('');
+
     } catch (err) {
-        alert('Network error while clearing history.');
+        statusEl.textContent = '❌ Could not load live floods.';
+        toast('Could not reach the GDACS live-flood feed.', 'err');
+        console.error(err);
+    }
+    liveFloodsLoaded = true;
+}
+
+async function showFloodShape(eventid, episodeid, lat, lng, name, alertlevel) {
+    const color = ALERT_COLOR[alertlevel] || '#3b82f6';
+    toast(`Loading affected area for ${name}…`, '', 2200);
+    map.flyTo([lat, lng], 6, { duration: 1.1 });
+
+    try {
+        const res = await fetch(`/api/live-floods/shape?eventid=${eventid}&episodeid=${episodeid}`);
+        const data = await res.json();
+        if (!res.ok || !data.features) throw new Error(data.error || 'No shape');
+
+        // Draw only the real "affected area" polygon(s), skip centroid points
+        const polys = { type: 'FeatureCollection', features: data.features.filter(
+            f => f.geometry && (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon')
+                 && (f.properties?.Class === 'Poly_Affected' || f.properties?.polygonlabel === 'Affected area')
+        )};
+        const fallback = polys.features.length === 0
+            ? { type:'FeatureCollection', features: data.features.filter(f => f.geometry && (f.geometry.type==='Polygon'||f.geometry.type==='MultiPolygon')) }
+            : polys;
+
+        if (fallback.features.length === 0) { toast('No flood shape available for this event.', 'warn'); return; }
+
+        const layer = L.geoJSON(fallback, {
+            style: { color, weight: 2, fillOpacity: 0.28, fillColor: color, dashArray: '4,3' }
+        }).addTo(liveDataLayer);
+        layer.bindPopup(`<b>${name}</b><br>Affected area · <b>${alertlevel} alert</b><br><i>Live flood (GDACS)</i>`);
+        map.flyToBounds(layer.getBounds(), { padding: [50, 50], maxZoom: 10 });
+        toast(`Showing affected area for ${name}.`, 'ok', 2600);
+    } catch (err) {
+        toast('Could not load the flood shape.', 'err');
+        console.error(err);
     }
 }
+
+// ════════════════════════════════════════════════════════════════════
+// Engine health polling
+// ════════════════════════════════════════════════════════════════════
+async function checkEngine() {
+    const dot = document.getElementById('engine-dot');
+    const label = document.getElementById('engine-label');
+    try {
+        const res = await fetch('/api/health');
+        const j = await res.json();
+        if (res.ok && j.ai_engine === 'online') {
+            dot.className = 'status-dot online'; label.textContent = 'AI Engine online';
+        } else {
+            dot.className = 'status-dot offline'; label.textContent = 'AI Engine offline';
+        }
+    } catch {
+        dot.className = 'status-dot offline'; label.textContent = 'Server offline';
+    }
+}
+checkEngine();
+setInterval(checkEngine, 15000);
 </script>
 </body>
 </html>

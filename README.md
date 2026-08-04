@@ -1,302 +1,150 @@
-# Disaster Prediction System Using Deep Learning
+# 🛰️ FloodWatch AI — Disaster Management with Deep Learning
 
-A real-time flood detection system that uses a deep learning model (U-Net with ResNet34 backbone) trained on Sentinel-1 SAR satellite imagery to detect and map flood zones — either from live satellite data via Microsoft Planetary Computer or from locally uploaded GeoTIFF files.
-
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [How It Works](#how-it-works)
-- [Project Structure](#project-structure)
-- [Prerequisites](#prerequisites)
-- [Installation & Setup](#installation--setup)
-- [Running the Application](#running-the-application)
-- [API Reference](#api-reference)
-- [Model Details](#model-details)
-- [Testing](#testing)
-- [Troubleshooting](#troubleshooting)
+An AI-powered flood detection and monitoring dashboard. It combines a trained
+deep-learning model that detects floods in satellite radar imagery with a live
+feed of real-world floods happening right now around the world.
 
 ---
 
-## Overview
+## What it does
 
-This system allows users to:
+The dashboard (a single web page with an interactive map) has **four modes**:
 
-1. **Live Scan** — Click any location on the world map, and the system automatically fetches the latest Sentinel-1 RTC (Radiometric Terrain Corrected) SAR radar imagery from Microsoft Planetary Computer, runs deep learning inference on it, and overlays detected flood zones as polygons on an interactive map.
-
-2. **Upload & Analyze** — Upload a local 2-band `.tif` / `.tiff` GeoTIFF (Sentinel-1 format, VV + VH channels), run the same AI pipeline, and visualize results.
-
-The AI model outputs a binary flood segmentation mask, which is converted to GeoJSON polygons, filtered against OpenStreetMap's permanent water bodies and the global land mask to eliminate false positives (oceans, rivers, lakes), and rendered as interactive red polygon overlays on a satellite base map.
+| Mode | What it does |
+|---|---|
+| 📡 **Scan** | Click any point on the world map → the system downloads the latest Sentinel-1 radar image for that ~10 × 10 km area from Microsoft Planetary Computer, runs the AI model, and overlays detected flood zones as colored polygons. |
+| 🌐 **Live Data** | Pulls **real, currently-active floods worldwide** from GDACS (the UN/EU Global Disaster Alert System). Shows each as a colored marker + text summary, and draws the real affected-area shape on the map when clicked. No AI, no API key — real reported events. |
+| 📁 **Upload** | Upload your own 2-band Sentinel-1 GeoTIFF (VV + VH, dB scale) and run the same AI model on it. |
+| 📋 **History** | Every AI scan is logged to a local database. Browse, revisit, or delete past scans. |
 
 ---
 
 ## Architecture
 
+Three programs talking over HTTP:
+
 ```
-Browser (Leaflet Map UI)
-        │
-        │  HTTP (REST)
-        ▼
-Node.js Express Server  (port 3000)
-  - Serves frontend static files
-  - Bridges upload/live requests to AI API
-        │
-        │  HTTP (REST)
-        ▼
-Python FastAPI AI Engine  (port 8000)
-  - Loads U-Net ResNet34 model
-  - Fetches Sentinel-1 data (live mode)
-  - Runs inference
-  - Filters with OSM + global land mask
-  - Returns GeoJSON flood polygons
+Browser  (public/index.html + Leaflet map)      ← what the user sees
+   │  HTTP
+   ▼
+Node.js + Express  (server.js, port 3000)        ← serves the page, proxies requests,
+   │  HTTP                                          logs scans, proxies GDACS feed
+   ▼
+Python + FastAPI  (main.py, port 8000)           ← the AI engine: loads the model,
+                                                    fetches satellite data, runs inference
 ```
+
+- **Leaflet** is the JavaScript library that draws the interactive map (satellite tiles, markers, flood polygons).
+- The Node server never does AI itself — it forwards image/scan requests to Python and records results.
+- The Live Data feed is proxied through Node so the browser avoids cross-origin (CORS) issues.
 
 ---
 
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Deep Learning Model | PyTorch + segmentation-models-pytorch (U-Net / ResNet34) |
-| Satellite Data Source | Microsoft Planetary Computer (Sentinel-1 RTC) |
-| AI API Backend | Python FastAPI + Uvicorn |
-| Dashboard Backend | Node.js + Express |
-| Frontend UI | Leaflet.js (interactive map) |
-| Geospatial Processing | Rasterio, Rioxarray, GeoPandas, Shapely |
-| Permanent Water Filtering | OpenStreetMap via OSMnx |
-| Ocean Filtering | global-land-mask |
-| Satellite Catalog | STAC (pystac-client) + planetary-computer |
-
----
-
-## How It Works
-
-### Live Scan Mode
-
-1. User clicks a location on the map.
-2. A ~10km × 10km bounding box is calculated around the click point.
-3. The frontend POSTs the bounding box to `/api/live-analyze` on the Node server.
-4. Node forwards it to the FastAPI `/predict-live` endpoint.
-5. FastAPI queries Microsoft Planetary Computer's STAC API for the latest Sentinel-1 RTC scene covering that area.
-6. VV and VH band rasters are downloaded and clipped to the bounding box.
-7. Linear backscatter values are converted to decibel scale (`10 * log10(x)`).
-8. Values are normalized to `[-30, 0]` dB range and scaled to `[0, 1]`.
-9. The 2-channel tensor is passed through the U-Net model.
-10. Sigmoid + threshold (0.5) produces a binary flood mask.
-11. Flood pixels are vectorized into GeoJSON polygons using `rasterio.features.shapes`.
-12. Polygons are reprojected from UTM to EPSG:4326 (WGS84 lat/lon).
-13. Ocean polygons are removed using the global land mask.
-14. Permanent water bodies (rivers, lakes) from OpenStreetMap are subtracted from the flood polygons.
-15. Remaining polygons — representing actual floodwater — are returned as GeoJSON.
-16. Frontend renders red overlays on the satellite basemap.
-
-### Upload Mode
-
-Same pipeline as above, steps 9–16, but the input raster is a user-uploaded local `.tif` file already in dB format.
-
----
-
-## Project Structure
-
-```
-disaster-prediction-system/
-│
-├── disaster-ai-api/                  # Python AI backend
-│   ├── main.py                       # FastAPI app — model loading, /predict, /predict-live
-│   ├── test_api.py                   # Script to test API with a dummy TIF
-│   ├── test_radar.tif                # Auto-generated dummy test file
-│   ├── flood_unet_resnet34.pth       # Trained model weights (~97MB)
-│   └── cache/                        # STAC/planetary computer response cache
-│
-├── disaster-dashboard/               # Node.js dashboard + frontend
-│   ├── server.js                     # Express server — serves UI, bridges to AI API
-│   ├── package.json                  # Node dependencies
-│   ├── peek.py                       # Utility: visualize a TIF file with matplotlib
-│   ├── real_flood_test.tif           # Sample real Sentinel-1 flood scene (~2MB)
-│   └── public/
-│       └── index.html                # Full frontend — Leaflet map + control panel
-│
-└── README.md                         # This file
-```
-
----
-
-## Prerequisites
-
-- **Python** 3.9 or higher
-- **Node.js** 18 or higher
-- The trained model file: `disaster-ai-api/flood_unet_resnet34.pth` (must be present)
-- Internet connection (for live scan mode — fetches satellite data from Microsoft Planetary Computer)
-
----
-
-## Installation & Setup
-
-### Step 1: Set Up the Python AI Engine
-
-Open a terminal inside `disaster-ai-api/`:
-
-```bash
-cd disaster-ai-api
-python -m venv .venv
-```
-
-Activate the virtual environment:
-
-- **Windows (PowerShell):** `.\.venv\Scripts\Activate.ps1`
-- **Windows (CMD):** `.\.venv\Scripts\activate.bat`
-- **Linux/macOS:** `source .venv/bin/activate`
-
-Install dependencies:
-
-```bash
-pip install fastapi uvicorn torch torchvision rasterio numpy segmentation-models-pytorch \
-            python-multipart requests osmnx geopandas shapely rioxarray pystac-client \
-            planetary-computer global-land-mask
-```
-
-> Note: `torch` may take several minutes to install. If you have a GPU, install the CUDA-enabled version from [pytorch.org](https://pytorch.org/get-started/locally/).
-
-### Step 2: Set Up the Node Dashboard
-
-Open another terminal inside `disaster-dashboard/`:
-
-```bash
-cd disaster-dashboard
-npm install
-```
-
----
-
-## Running the Application
-
-You need **two terminals** running simultaneously.
-
-### Terminal 1 — Start the AI Engine
-
-```bash
-cd disaster-ai-api
-# Activate your virtual environment first!
-python main.py
-# OR
-uvicorn main:app --host 127.0.0.1 --port 8000
-```
-
-Expected output:
-```
-🧠 Loading AI Model...
-✅ AI Model Armed and Ready.
-INFO: Uvicorn running on http://127.0.0.1:8000
-```
-
-### Terminal 2 — Start the Dashboard
-
-```bash
-cd disaster-dashboard
-node server.js
-```
-
-Expected output:
-```
-🌍 Main Dashboard Server running on http://localhost:3000
-```
-
-### Open the App
-
-Navigate to [http://localhost:3000](http://localhost:3000) in your browser.
-
----
-
-## API Reference
-
-All endpoints are on the FastAPI server (`http://127.0.0.1:8000`). The Node server proxies them via `/api/`.
-
-### `POST /predict` — Upload & Analyze
-
-Accepts a local 2-band GeoTIFF (Sentinel-1, VV + VH, already in dB scale).
-
-**Request:** `multipart/form-data`
-- Field: `file` — the `.tif` / `.tiff` file
-
-**Response:**
-```json
-{
-  "type": "FeatureCollection",
-  "features": [
-    {
-      "type": "Feature",
-      "geometry": { "type": "Polygon", "coordinates": [[...]] },
-      "properties": { "danger_level": "High", "type": "Flood" }
-    }
-  ]
-}
-```
-
-### `POST /predict-live` — Live Satellite Scan
-
-Fetches the latest Sentinel-1 scene from Microsoft Planetary Computer for the given area.
-
-**Request:** `application/json`
-```json
-{ "bbox": [minLng, minLat, maxLng, maxLat] }
-```
-
-**Response:** Same GeoJSON FeatureCollection as above.
-
-### Interactive API Docs
-
-Visit [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for the auto-generated Swagger UI.
-
----
-
-## Model Details
+## The AI Model (v4)
 
 | Property | Value |
 |---|---|
 | Architecture | U-Net |
-| Encoder Backbone | ResNet34 |
-| Input Channels | 2 (VV + VH SAR polarizations) |
-| Output | 1-channel binary segmentation mask |
-| Classification Threshold | 0.5 (sigmoid output) |
-| Inference Device | CPU |
-| Model File Size | ~97 MB |
-| Framework | PyTorch + segmentation-models-pytorch |
+| Backbone | EfficientNet-B3 |
+| Input channels | 4 — `VV`, `VH`, `VV/VH ratio`, permanent-water mask |
+| Loss | DiceLoss + FocalLoss (α=0.75, γ=2) |
+| Dataset | Sen1Floods11 (hand-labeled Sentinel-1 scenes) |
+| Model file | `disaster-ai-api/unet_b3.pth` (~53 MB) |
+| Training notebook | `old_models_and_tif/colab_model_v4.ipynb` |
 
-The model was trained on Sentinel-1 SAR imagery with VV and VH radar backscatter bands. Input images are preprocessed to dB scale, clipped to [-30, 0] dB, and normalized to [0, 1] before inference.
+**Inference note:** the model expects a 4th "permanent water" channel that only
+exists in the training dataset. For live scans and uploads (arbitrary locations),
+that channel is supplied as zeros; the downstream OpenStreetMap water filter
+removes permanent water bodies anyway, so the visible result is effectively the same.
+
+**Post-processing** (`main.py`): predictions are thresholded at 0.65, oversized
+false-positive blobs (> 5 km²) are dropped, then ocean pixels (global-land-mask)
+and permanent water (OpenStreetMap) are filtered out. Each surviving polygon is
+sized in km² and assigned a danger level (Low / Medium / High / Critical).
 
 ---
 
-## Testing
+## Live Data source — GDACS
 
-Run the built-in API test from inside `disaster-ai-api/` (with virtual environment active):
+[GDACS](https://www.gdacs.org) (Global Disaster Alert & Coordination System, run
+by the UN & European Commission) provides a **free, no-key** JSON feed of active
+disasters. FloodWatch filters it to floods (`eventlist=FL`) and can fetch each
+event's real "affected area" polygon. Alert levels map to color:
 
-```bash
-python test_api.py
+- 🔴 **Red** — highest severity
+- 🟠 **Orange** — moderate
+- 🟢 **Green** — low
+
+---
+
+## Project structure
+
+```
+mp-latest/
+├── disaster-ai-api/               # Python FastAPI AI engine
+│   ├── main.py                    # model load, inference, filtering, endpoints
+│   ├── unet_b3.pth                # v4 trained model (4-channel)
+│   ├── requirements.txt
+│   └── real_flood_test_v4_tif_file.tif   # sample 2-band test image
+├── disaster-dashboard/            # Node.js dashboard
+│   ├── server.js                  # Express server + GDACS proxy + health check
+│   ├── history.js                 # SQLite scan-history module
+│   ├── scans.db                   # scan history database
+│   └── public/index.html          # the entire frontend (map + UI)
+├── old_models_and_tif/            # archived models, TIFs, training notebooks
+│   └── colab_model_v4.ipynb       # notebook used to train unet_b3.pth
+├── README.md
+└── PROGRESS.md                    # staged development log
 ```
 
-This generates a synthetic 256×256 2-band GeoTIFF, sends it to `/predict`, and prints the returned GeoJSON.
+---
 
-To visually inspect a TIF file:
+## API endpoints
 
+**Python AI engine (port 8000)**
+- `POST /predict` — analyze an uploaded GeoTIFF
+- `POST /predict-live` — fetch satellite data for a bbox and analyze it
+
+**Node dashboard (port 3000)**
+- `GET  /api/health` — reports whether the Python engine is reachable
+- `POST /api/analyze-satellite` — proxy an upload to the AI engine, log result
+- `POST /api/live-analyze` — proxy a live scan to the AI engine, log result
+- `GET  /api/live-floods` — active worldwide floods from GDACS
+- `GET  /api/live-floods/shape?eventid=&episodeid=` — one event's affected-area polygon
+- `GET/DELETE /api/history[/:id]` — read / delete scan history
+
+---
+
+## How to run
+
+**1 — AI engine (Python)**
+```bash
+cd disaster-ai-api
+python -m venv .venv
+# Windows: .\.venv\Scripts\Activate.ps1   |   macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+python main.py            # starts on http://127.0.0.1:8000
+```
+
+**2 — Dashboard (Node)**
 ```bash
 cd disaster-dashboard
-python peek.py
-# Edit peek.py to set file_path to your target .tif file
+npm install
+node server.js            # starts on http://localhost:3000
 ```
+
+**3 — Open** http://localhost:3000
+
+> The **Live Data** and **History** tabs work with only the Node server running.
+> The **Scan** and **Upload** tabs need the Python AI engine running too — the
+> header status dot turns teal ("AI Engine online") when it's reachable.
 
 ---
 
-## Troubleshooting
+## Tech stack
 
-| Problem | Solution |
-|---|---|
-| `Error communicating with AI Engine` | Make sure `python main.py` is running on port 8000 before starting Node. |
-| `ModuleNotFoundError` in Python | Re-activate your virtual environment: `.\.venv\Scripts\Activate.ps1` |
-| `RuntimeError` loading model weights | Confirm `flood_unet_resnet34.pth` exists in `disaster-ai-api/` and hasn't been corrupted. |
-| No flood polygons shown | The area may genuinely be clear, or try a different region/upload a known flood TIF. |
-| Live scan shows "No recent Sentinel-1 data" | Some remote regions have sparse satellite coverage. Try a different location. |
-| OSM filter warning in logs | Non-fatal. The system continues without permanent water filtering in that case. |
-| Slow inference | Inference runs on CPU by default. Expected time is 5–30 seconds depending on raster size. |
+**AI:** PyTorch · segmentation-models-pytorch (U-Net + EfficientNet-B3) · rasterio ·
+rioxarray · geopandas · shapely · osmnx · global-land-mask · FastAPI · uvicorn ·
+Microsoft Planetary Computer (Sentinel-1 RTC)
+
+**Dashboard:** Node.js · Express · Leaflet · better-sqlite3 · axios · multer · GDACS feed

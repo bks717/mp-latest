@@ -52,17 +52,39 @@ app.add_middleware(
 # ─────────────────────────────────────────────
 # Load Model
 # ─────────────────────────────────────────────
-print("🧠 Loading AI Model (v3 — EfficientNet-B3 backbone)...")
+print("🧠 Loading AI Model (v4 — EfficientNet-B3, 4-channel)...")
 device = torch.device("cpu")
+MODEL_PATH = "unet_b3.pth"
 model = smp.Unet(
-    encoder_name="efficientnet-b3",   # v3: upgraded from resnet34
+    encoder_name="efficientnet-b3",
     encoder_weights=None,
-    in_channels=2,
+    in_channels=4,   # v4: VV, VH, VV/VH ratio, permanent-water mask
     classes=1,
 )
-model.load_state_dict(torch.load("flood_unet_resnet34.pth", map_location=device))
+model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
 model.eval()
 print(f"✅ AI Model Armed and Ready.  Threshold={FLOOD_THRESHOLD}  Max polygon={FALSE_POSITIVE_MAX_KM2} km²")
+
+
+# ─────────────────────────────────────────────
+# Shared Helper: build the 4-channel input tensor
+# ─────────────────────────────────────────────
+# The v4 model was trained on 4 channels (see colab_model_v4.ipynb):
+#   1. VV  (normalised dB)
+#   2. VH  (normalised dB)
+#   3. ratio = VV / VH,  min-max normalised
+#   4. JRC permanent-water mask
+# At inference for an arbitrary location we don't have the JRC mask, so we
+# supply a zero channel. The downstream OSM permanent-water filter removes
+# permanent water bodies anyway, so the visible result is effectively the same.
+def build_model_input(vv_norm: np.ndarray, vh_norm: np.ndarray) -> torch.Tensor:
+    epsilon = 1e-7
+    ratio = vv_norm / (vh_norm + epsilon)
+    ratio = (ratio - ratio.min()) / (ratio.max() - ratio.min() + epsilon)
+    water = np.zeros_like(vv_norm)   # JRC placeholder — see note above
+    image_4ch = np.stack([vv_norm, vh_norm, ratio, water], axis=0)
+    image_4ch = np.nan_to_num(image_4ch)
+    return torch.tensor(image_4ch, dtype=torch.float32).unsqueeze(0).to(device)
 
 
 # ─────────────────────────────────────────────
@@ -200,11 +222,11 @@ def filter_polygons(raw_polygons: list, source_crs: str) -> gpd.GeoDataFrame:
     tags = {"natural": ["water", "coastline"], "waterway": ["river", "stream"], "water": True}
 
     try:
-        osm_water = ox.features_from_bbox(bbox=ox_bbox, tags=tags)
+        osm_water = ox.features_from_bbox(ox_bbox, tags=tags)
         if not osm_water.empty:
             print(f"🌊 Found {len(osm_water)} permanent water bodies. Filtering...")
             osm_water["geometry"] = osm_water.geometry.buffer(0)
-            osm_geom = osm_water.unary_union
+            osm_geom = osm_water.union_all()
             gdf["geometry"] = gdf.geometry.difference(osm_geom)
             gdf = gdf[~gdf.is_empty]
             print(f"✅ Filtering complete. Remaining flood zones: {len(gdf)}")
@@ -248,7 +270,8 @@ async def predict_flood(file: UploadFile = File(...)):
             image = np.clip(image, -30, 0)
             image = (image + 30) / 30.0
 
-    image_tensor = torch.tensor(image, dtype=torch.float32).unsqueeze(0).to(device)
+    # Uploaded TIF is 2-band (VV, VH); reconstruct the ratio + water channels.
+    image_tensor = build_model_input(image[0], image[1])
 
     with torch.no_grad():
         raw_prediction = model(image_tensor)
@@ -338,7 +361,8 @@ async def predict_live(request: LiveScanRequest):
         image = np.clip(image, -30, 0)
         image = (image + 30) / 30.0
 
-        image_tensor = torch.tensor(image, dtype=torch.float32).unsqueeze(0).to(device)
+        # Reconstruct the ratio + water channels the v4 model expects.
+        image_tensor = build_model_input(image[0], image[1])
 
         # 4. Inference
         with torch.no_grad():
