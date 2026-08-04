@@ -52,6 +52,43 @@ Python + FastAPI  (main.py, port 8000)           ← the AI engine: loads the mo
 | Model file | `disaster-ai-api/unet_b3.pth` (~53 MB) |
 | Training notebook | `old_models_and_tif/colab_model_v4.ipynb` |
 
+### Model Pipeline & Training Workflow
+
+```mermaid
+graph TD
+    %% Custom Styling Definitions
+    classDef data fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#01579b;
+    classDef model fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#4a148c;
+    classDef train fill:#ffe0b2,stroke:#f57c00,stroke-width:2px,color:#e65100;
+    classDef eval fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#1b5e20;
+
+    subgraph Data Preparation
+        A("Satellite Images"):::data --> B("Download Dataset"):::data
+        B --> C("Read Images"):::data
+        C --> D("Augment Images"):::data
+        D --> E("Create Dataset"):::data
+        E --> F("Create DataLoader"):::data
+    end
+
+    subgraph Model Architecture
+        F --> G("EfficientNet-B3 Encoder"):::model
+        G --> H("U-Net Decoder"):::model
+        H --> I("Predicted Flood Mask"):::model
+    end
+
+    subgraph Training & Optimization
+        I --> J("Loss Function <br/> (Dice + Focal Loss)"):::train
+        J --> K("Backpropagation"):::train
+        K --> L("Updated Weights"):::train
+        L -->|Repeat for 50 Epochs| G
+    end
+
+    subgraph Evaluation & Inference
+        L --> M("Evaluate Model"):::eval
+        M --> N("Predict on New Image"):::eval
+    end
+```
+
 **Inference note:** the model expects a 4th "permanent water" channel that only
 exists in the training dataset. For live scans and uploads (arbitrary locations),
 that channel is supplied as zeros; the downstream OpenStreetMap water filter
