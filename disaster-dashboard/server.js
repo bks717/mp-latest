@@ -112,12 +112,80 @@ const GDACS_UA = { 'User-Agent': 'FloodWatch-AI/1.0 (educational project)' };
 // GET /api/live-floods — list of currently active floods worldwide (as GeoJSON points).
 app.get('/api/live-floods', async (req, res) => {
     try {
-        console.log('🌐 Fetching live floods from GDACS...');
-        const r = await axios.get(
-            'https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=FL',
-            { headers: GDACS_UA, timeout: 25_000 }
-        );
-        res.json(r.data);
+        const now = new Date();
+        const todate = req.query.todate || now.toISOString().split('T')[0];
+        
+        // Dynamic default: past 90 days for recent active events
+        const defaultFrom = new Date(now);
+        defaultFrom.setDate(defaultFrom.getDate() - 90);
+        const fromdate = req.query.fromdate || defaultFrom.toISOString().split('T')[0];
+        
+        const alertlevel = req.query.alertlevel || 'Green;Orange;Red';
+        const pagesize = parseInt(req.query.pagesize, 10) || 100;
+        const maxPages = parseInt(req.query.maxpages, 10) || 5;
+
+        console.log(`🌐 Fetching live floods from GDACS (Date: ${fromdate} to ${todate}, AlertLevels: ${alertlevel}, maxPages: ${maxPages})...`);
+
+        const allFeatures = [];
+        const seenEventIds = new Set();
+        const eventIdsReceived = [];
+
+        for (let page = 1; page <= maxPages; page++) {
+            try {
+                const response = await axios.get(
+                    'https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH',
+                    {
+                        params: {
+                            eventlist: 'FL',
+                            alertlevel,
+                            fromdate,
+                            todate,
+                            pagesize,
+                            pagenumber: page
+                        },
+                        headers: GDACS_UA,
+                        timeout: 25_000
+                    }
+                );
+
+                const features = response.data?.features || [];
+                console.log(`   📄 Page ${page}: received ${features.length} features`);
+
+                if (!features.length) break;
+
+                for (const feat of features) {
+                    const eventId = feat.properties?.eventid;
+                    if (eventId && !seenEventIds.has(eventId)) {
+                        seenEventIds.add(eventId);
+                        eventIdsReceived.push(eventId);
+                        allFeatures.push(feat);
+                    }
+                }
+
+                if (features.length < pagesize) break;
+            } catch (pageErr) {
+                console.error(`   ⚠️ Page ${page} fetch error:`, pageErr.message);
+                if (page === 1) throw pageErr;
+                break;
+            }
+        }
+
+        // Server-side diagnostic logging
+        const target1103972 = allFeatures.find(f => f.properties?.eventid == 1103972);
+        console.log(`📊 GDACS Flood Summary: ${allFeatures.length} unique events received worldwide.`);
+        console.log(`   📋 Event IDs (${eventIdsReceived.length}): ${eventIdsReceived.slice(0, 15).join(', ')}${eventIdsReceived.length > 15 ? '...' : ''}`);
+        if (target1103972) {
+            const p = target1103972.properties || {};
+            const coords = target1103972.geometry?.coordinates;
+            console.log(`   ✅ Event 1103972 found -> Name: "${p.name}", Country: "${p.country}", Alert: "${p.alertlevel}", Dates: ${p.fromdate} -> ${p.todate}, Coords: [${coords ? coords.join(', ') : 'N/A'}]`);
+        } else {
+            console.log('   ℹ️ Event 1103972 was not found in the current fetched dataset.');
+        }
+
+        res.json({
+            type: 'FeatureCollection',
+            features: allFeatures
+        });
     } catch (err) {
         console.error('🚨 GDACS list fetch failed:', err.message);
         res.status(502).json({ error: 'Could not reach GDACS live-flood feed.' });

@@ -962,26 +962,32 @@ async function loadLiveFloods() {
 
         // Drop a colored marker for every event
         feats.forEach(f => {
+            if (!f.geometry || !Array.isArray(f.geometry.coordinates) || f.geometry.coordinates.length < 2) return;
             const [lng, lat] = f.geometry.coordinates;
-            const p = f.properties;
+            if (typeof lat !== 'number' || typeof lng !== 'number') return;
+            const p = f.properties || {};
             const color = ALERT_COLOR[p.alertlevel] || '#3b82f6';
+            const safeName = (p.name || 'Flood').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            const safeAlert = (p.alertlevel || 'Green').replace(/'/g, "\\'");
             L.circleMarker([lat, lng], { color, radius: 8, weight: 3, fillOpacity: 0.5, fillColor: color })
                 .addTo(liveDataLayer)
-                .bindPopup(`<b>${p.name}</b><br>Alert: <b>${p.alertlevel}</b><br>${fmtDate(p.fromdate)} → ${fmtDate(p.todate)}<br>Source: ${p.source || 'GDACS'}`);
+                .bindPopup(`<b>${p.name || 'Flood'}</b><br>Country: <b>${p.country || 'Unknown'}</b><br>Alert: <b>${p.alertlevel || 'N/A'}</b><br>${fmtDate(p.fromdate)} → ${fmtDate(p.todate)}<br>Source: ${p.source || 'GDACS'}<div style="margin-top:6px;"><button class="btn btn-sm btn-primary" onclick="showFloodShape(${p.eventid},${p.episodeid},${lat},${lng},'${safeName}','${safeAlert}')" style="padding:4px 8px;font-size:11px;cursor:pointer;border-radius:4px;">📐 Draw Affected Area</button></div>`);
         });
 
         // Build the sidebar list with text
-        list.innerHTML = feats.map(f => {
-            const p = f.properties;
+        list.innerHTML = feats.filter(f => f.geometry && Array.isArray(f.geometry.coordinates) && f.geometry.coordinates.length >= 2).map(f => {
+            const p = f.properties || {};
             const [lng, lat] = f.geometry.coordinates;
             const color = ALERT_COLOR[p.alertlevel] || '#3b82f6';
             const alertCls = { Red:'sev-critical-bg', Orange:'sev-high-bg', Green:'sev-low-bg' }[p.alertlevel] || 'sev-none-bg';
             // GDACS htmldescription is a clean one-liner like "Red Flood in China from: ... to: ..."
             const desc = (p.htmldescription || p.description || '').replace(/<[^>]*>/g, '');
-            return `<div class="hist-card clickable" onclick="showFloodShape(${p.eventid},${p.episodeid},${lat},${lng},'${(p.name||'').replace(/'/g,"\\'")}','${p.alertlevel}')">
+            const safeName = (p.name || 'Flood').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            const safeAlert = (p.alertlevel || 'Green').replace(/'/g, "\\'");
+            return `<div class="hist-card clickable" onclick="showFloodShape(${p.eventid},${p.episodeid},${lat},${lng},'${safeName}','${safeAlert}')">
                 <div class="hist-top">
                     <span class="hist-type"><span style="width:9px;height:9px;border-radius:50%;background:${color};display:inline-block"></span> ${p.name || 'Flood'}</span>
-                    <span class="hist-badge ${alertCls}">${p.alertlevel}</span>
+                    <span class="hist-badge ${alertCls}">${p.alertlevel || 'Alert'}</span>
                 </div>
                 <div class="hist-loc">📍 ${p.country || '—'} · ${lat.toFixed(2)}°, ${lng.toFixed(2)}°</div>
                 <div class="hist-meta" style="display:block;line-height:1.5;color:var(--text-1)">${desc}</div>
