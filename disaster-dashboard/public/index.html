@@ -1190,12 +1190,7 @@
         <div class="header-hotspots-group">
             <span class="header-label">Basin Hotspot:</span>
             <select id="header-basin-select" class="header-select" onchange="onHeaderBasinSelect(this.value)">
-                <option value="26.9057|93.8170|Brahmaputra Basin, Assam">🌊 Brahmaputra Basin (Assam, India)</option>
-                <option value="29.9511|-90.0715|Lower Mississippi, USA">🌊 Lower Mississippi (New Orleans, USA)</option>
-                <option value="50.9375|6.9603|Rhine River Basin, Germany">🌊 Rhine Catchment (Cologne, Germany)</option>
-                <option value="27.7052|68.8574|Indus River, Pakistan">🌊 Indus Floodplain (Sindh, Pakistan)</option>
-                <option value="-30.0346|-51.2177|Rio Grande do Sul, Brazil">🌊 RS Catchment (Porto Alegre, Brazil)</option>
-                <option value="23.1291|113.2644|Pearl River Delta, China">🌊 Pearl River Delta (Guangdong, China)</option>
+                <option value="">🌍 Loading Active Flood Disasters (UN GDACS)...</option>
             </select>
         </div>
 
@@ -1238,37 +1233,14 @@
                 <p class="hint">Continuous predictive evaluation from 24 genuine live environmental factors (ECMWF IFS, Copernicus GloFAS, Copernicus 30m DEM, OpenStreetMap).</p>
 
                 <!-- Monitored Basin Hotspots -->
-                <div class="section-label" style="margin-top:4px;">Monitored Basin Hotspots</div>
-                <div class="hotspots-grid">
-                    <button class="hotspot-chip" onclick="selectHotspot(26.9057, 93.8170, 'Brahmaputra Basin, Assam')">
-                        <span class="hotspot-name">Brahmaputra Basin</span>
-                        <span class="hotspot-loc">Assam, India · 26.91°N, 93.82°E</span>
-                    </button>
-                    <button class="hotspot-chip" onclick="selectHotspot(29.9511, -90.0715, 'Lower Mississippi, USA')">
-                        <span class="hotspot-name">Lower Mississippi</span>
-                        <span class="hotspot-loc">New Orleans, USA · 29.95°N, -90.07°W</span>
-                    </button>
-                    <button class="hotspot-chip" onclick="selectHotspot(50.9375, 6.9603, 'Rhine River Basin, Germany')">
-                        <span class="hotspot-name">Rhine Catchment</span>
-                        <span class="hotspot-loc">Cologne, Germany · 50.94°N, 6.96°E</span>
-                    </button>
-                    <button class="hotspot-chip" onclick="selectHotspot(27.7052, 68.8574, 'Indus River, Pakistan')">
-                        <span class="hotspot-name">Indus Floodplain</span>
-                        <span class="hotspot-loc">Sindh, Pakistan · 27.71°N, 68.86°E</span>
-                    </button>
-                    <button class="hotspot-chip" onclick="selectHotspot(-30.0346, -51.2177, 'Rio Grande do Sul, Brazil')">
-                        <span class="hotspot-name">RS Catchment</span>
-                        <span class="hotspot-loc">Porto Alegre, Brazil · -30.03°S, -51.22°W</span>
-                    </button>
-                    <button class="hotspot-chip" onclick="selectHotspot(23.1291, 113.2644, 'Pearl River Delta, China')">
-                        <span class="hotspot-name">Pearl River Delta</span>
-                        <span class="hotspot-loc">Guangdong, China · 23.13°N, 113.26°E</span>
-                    </button>
+                <div class="section-label" style="margin-top:4px;">Monitored Basin Hotspots (Live GDACS)</div>
+                <div class="hotspots-grid" id="hotspots-grid-container">
+                    <div style="font-size:11px; color:var(--text-2); padding:6px; grid-column:1/-1;">Fetching active flood disasters from UN/EC GDACS…</div>
                 </div>
 
                 <div class="coord-grid">
-                    <input type="number" id="predictLat" class="field" placeholder="Target Latitude" step="any" value="26.9057">
-                    <input type="number" id="predictLng" class="field" placeholder="Target Longitude" step="any" value="93.8170">
+                    <input type="number" id="predictLat" class="field" placeholder="Target Latitude" step="any">
+                    <input type="number" id="predictLng" class="field" placeholder="Target Longitude" step="any">
                     <button class="btn btn-ghost" style="width:auto; padding:0 14px;" onclick="setPredictTarget(parseFloat(document.getElementById('predictLat').value), parseFloat(document.getElementById('predictLng').value), true)">Set Target</button>
                 </div>
 
@@ -1284,7 +1256,7 @@
                 </div>
 
                 <div class="target-readout set" id="predict-target-readout" style="margin-top:8px;">
-                    <span>◎ Target Basin:</span> <b id="predict-coords-text">26.9057° N, 93.8170° E</b>
+                    <span>◎ Target Basin:</span> <b id="predict-coords-text">No location selected — click map</b>
                 </div>
 
                 <div style="margin-top:8px; display:flex; flex-direction:column; gap:5px;">
@@ -1900,12 +1872,12 @@
                 <div class="section-label">Target Footprint & Coordinates</div>
                 <p class="hint">Continuous multi-scale radar evaluation from 5×5 km local reach to 50×50 km macro-basin using genuine European Space Agency Sentinel-1 C-band Synthetic Aperture Radar.</p>
                 <div class="coord-grid">
-                    <input type="number" id="inputLat" class="field" placeholder="Lat" step="any" value="26.9057">
-                    <input type="number" id="inputLng" class="field" placeholder="Lng" step="any" value="93.8170">
+                    <input type="number" id="inputLat" class="field" placeholder="Lat" step="any">
+                    <input type="number" id="inputLng" class="field" placeholder="Lng" step="any">
                     <button class="btn btn-ghost" style="width:auto" onclick="jumpToCoords()">Set</button>
                 </div>
                 <div class="target-readout set" id="target-readout">
-                    <span>◎</span><span id="target-text">26.9057°, 93.8170° (Brahmaputra Basin)</span>
+                    <span>◎</span><span id="target-text">No location selected — click map</span>
                 </div>
 
                 <!-- Progressive Multi-Scale Stepper (5x5 -> 50x50 km) -->
@@ -1932,11 +1904,8 @@
                 </div>
 
                 <div style="display: flex; gap: 6px; margin-top: 8px;">
-                    <button id="sarMultiScaleBtn" class="btn btn-primary" style="flex: 2;" onclick="runMultiScaleSarScan()">
+                    <button id="sarMultiScaleBtn" class="btn btn-primary" style="flex: 1;" onclick="runMultiScaleSarScan()">
                         🛰️ Run Multi-Scale SAR Radar Scan (5×5 → 50×50 km)
-                    </button>
-                    <button id="demoScanBtn" class="btn btn-secondary" style="flex: 1; border: 1px solid rgba(56, 189, 248, 0.3); background: rgba(56, 189, 248, 0.08); color: #38bdf8;" onclick="runDemoScan()">
-                        ⚡ Real Demo Pass
                     </button>
                 </div>
 
@@ -1988,8 +1957,8 @@
                 <p class="hint">Live spatial impact evaluation combining OpenStreetMap Overpass physical building footprints, demographic density exposure, and FEMA Hazus structural depth-damage curves across 4 spatial extents.</p>
 
                 <div class="coord-grid">
-                    <input type="number" id="impactLat" class="field" placeholder="Lat" step="any" value="26.9057">
-                    <input type="number" id="impactLng" class="field" placeholder="Lng" step="any" value="93.8170">
+                    <input type="number" id="impactLat" class="field" placeholder="Lat" step="any">
+                    <input type="number" id="impactLng" class="field" placeholder="Lng" step="any">
                     <button class="btn btn-ghost" style="width:auto" onclick="syncImpactCoordsFromMap()">Sync</button>
                 </div>
 
@@ -2148,8 +2117,8 @@
                 <p class="hint">Hierarchical emergency dispatch & evacuation framework escalated across 4 operational spatial tiers (5×5 km tactical → 50×50 km strategic).</p>
 
                 <div class="coord-grid">
-                    <input type="number" id="actionLat" class="field" placeholder="Lat" step="any" value="26.9057">
-                    <input type="number" id="actionLng" class="field" placeholder="Lng" step="any" value="93.8170">
+                    <input type="number" id="actionLat" class="field" placeholder="Lat" step="any">
+                    <input type="number" id="actionLng" class="field" placeholder="Lng" step="any">
                     <button class="btn btn-ghost" style="width:auto" onclick="syncActionCoordsFromMap()">Sync</button>
                 </div>
 
@@ -2328,17 +2297,13 @@
                 <!-- Target Catchment Basin Selection -->
                 <div style="background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 12px;">
                     <div style="font-size: 11px; font-weight: 700; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">River Basin Target Coordinates</div>
-                    <div style="display: flex; gap: 6px; margin-bottom: 8px;">
-                        <button class="btn btn-ghost" style="flex: 1; padding: 5px 8px; font-size: 11px; height: auto;" onclick="setHydroTarget(26.9057, 93.8170, 'Brahmaputra Basin (Assam)')">🌊 Brahmaputra Basin</button>
-                        <button class="btn btn-ghost" style="flex: 1; padding: 5px 8px; font-size: 11px; height: auto;" onclick="setHydroTarget(30.3165, 78.0322, 'Ganga Basin (Uttarakhand)')">🏔️ Ganga Basin</button>
-                    </div>
                     <div class="coord-grid" style="grid-template-columns: 1fr 1fr auto; margin-bottom: 0;">
-                        <input type="number" id="hydroLat" class="field" placeholder="Target Lat" step="any" value="26.9057">
-                        <input type="number" id="hydroLng" class="field" placeholder="Target Lng" step="any" value="93.8170">
+                        <input type="number" id="hydroLat" class="field" placeholder="Target Lat" step="any">
+                        <input type="number" id="hydroLng" class="field" placeholder="Target Lng" step="any">
                         <button class="btn btn-ghost" style="width: auto; padding: 0 10px;" onclick="syncHydroTargetFromInputs()">Set</button>
                     </div>
                     <div id="hydro-target-readout" style="font-size: 11px; font-family: 'JetBrains Mono', monospace; color: #38bdf8; margin-top: 6px; display: flex; align-items: center; gap: 5px;">
-                        <span>◎ Station:</span> <span id="hydro-target-coords">26.9057° N, 93.8170° E</span>
+                        <span>◎ Station:</span> <span id="hydro-target-coords">No station selected — click map</span>
                     </div>
                 </div>
 
@@ -2357,7 +2322,7 @@
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 1px solid var(--border); padding-bottom: 6px;">
                         <div>
                             <div style="font-size: 13px; font-weight: 700; color: #f1f5f9;" id="hydro-res-name">Copernicus GloFAS Telemetry Basin</div>
-                            <div style="font-size: 11px; font-family: 'JetBrains Mono', monospace; color: #38bdf8;" id="hydro-res-coords">26.9057° N, 93.8170° E</div>
+                            <div style="font-size: 11px; font-family: 'JetBrains Mono', monospace; color: #38bdf8;" id="hydro-res-coords">--</div>
                         </div>
                         <span id="hydro-provider-pill" class="chip" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 10px; font-weight: 600;">Copernicus GloFAS</span>
                     </div>
@@ -2463,7 +2428,7 @@
             </div>
         </div>
         <div class="map-overlay" id="map-coordinates-bar">
-            <span>📍</span><span id="map-cursor-coords">Lat: 26.9057° N · Lng: 93.8170° E | Zoom: 3</span>
+            <span>📍</span><span id="map-cursor-coords">Click anywhere on the map to inspect coordinates · Zoom: 3</span>
         </div>
     </main>
 </div>
@@ -2632,24 +2597,26 @@ function switchTab(id) {
         }
     }
 
-    // Synchronize coordinates across tabs
-    const curLat = selectedLat != null ? selectedLat : 26.9057;
-    const curLng = selectedLng != null ? selectedLng : 93.8170;
-    if (id === 'live') {
-        const latIn = document.getElementById('inputLat');
-        const lngIn = document.getElementById('inputLng');
-        if (latIn && (!latIn.value || latIn.value === '')) latIn.value = curLat.toFixed(4);
-        if (lngIn && (!lngIn.value || lngIn.value === '')) lngIn.value = curLng.toFixed(4);
-    } else if (id === 'impact') {
-        const latIn = document.getElementById('impactLat');
-        const lngIn = document.getElementById('impactLng');
-        if (latIn) latIn.value = curLat.toFixed(4);
-        if (lngIn) lngIn.value = curLng.toFixed(4);
-    } else if (id === 'action') {
-        const latIn = document.getElementById('actionLat');
-        const lngIn = document.getElementById('actionLng');
-        if (latIn) latIn.value = curLat.toFixed(4);
-        if (lngIn) lngIn.value = curLng.toFixed(4);
+    // Synchronize coordinates across tabs if a location is selected
+    if (selectedLat != null && selectedLng != null) {
+        const curLat = selectedLat;
+        const curLng = selectedLng;
+        if (id === 'live') {
+            const latIn = document.getElementById('inputLat');
+            const lngIn = document.getElementById('inputLng');
+            if (latIn && (!latIn.value || latIn.value === '')) latIn.value = curLat.toFixed(4);
+            if (lngIn && (!lngIn.value || lngIn.value === '')) lngIn.value = curLng.toFixed(4);
+        } else if (id === 'impact') {
+            const latIn = document.getElementById('impactLat');
+            const lngIn = document.getElementById('impactLng');
+            if (latIn) latIn.value = curLat.toFixed(4);
+            if (lngIn) lngIn.value = curLng.toFixed(4);
+        } else if (id === 'action') {
+            const latIn = document.getElementById('actionLat');
+            const lngIn = document.getElementById('actionLng');
+            if (latIn) latIn.value = curLat.toFixed(4);
+            if (lngIn) lngIn.value = curLng.toFixed(4);
+        }
     }
     
     if (id === 'global')   { if(typeof initGlobalPredictionWorkspace === 'function') initGlobalPredictionWorkspace(); }
@@ -2726,8 +2693,8 @@ function sleep(ms) {
 
 // ── Shared Analysis Context (Guarantees SAR, Impact Matrix & Action Plan share the same reality) ──
 window.floodwatchSharedContext = {
-    lat: 26.9057,
-    lng: 93.8170,
+    lat: null,
+    lng: null,
     stages: [],
     geojson: null,
     totalFloodedKm2: 0,
@@ -2744,8 +2711,8 @@ async function runMultiScaleSarScan() {
             lat = selectedLat;
             lng = selectedLng;
         } else {
-            lat = 26.9057;
-            lng = 93.8170; // Default Brahmaputra Basin
+            toast('Please click on the map or enter coordinates to run SAR scan.', 'err');
+            return;
         }
     }
     const latIn = document.getElementById('inputLat');
@@ -2961,8 +2928,12 @@ async function runMultiScaleSarScan() {
 
 // ── 2. Impact Matrix Multi-Scale Assessment (5x5 -> 10x10 -> 25x25 -> 50x50 km) ──
 function syncImpactCoordsFromMap() {
-    let lat = selectedLat != null ? selectedLat : parseFloat(document.getElementById('inputLat')?.value || 26.9057);
-    let lng = selectedLng != null ? selectedLng : parseFloat(document.getElementById('inputLng')?.value || 93.8170);
+    let lat = selectedLat != null ? selectedLat : parseFloat(document.getElementById('inputLat')?.value);
+    let lng = selectedLng != null ? selectedLng : parseFloat(document.getElementById('inputLng')?.value);
+    if (isNaN(lat) || isNaN(lng)) {
+        toast('Please click on the map or enter coordinates first.', 'err');
+        return;
+    }
     const latIn = document.getElementById('impactLat');
     const lngIn = document.getElementById('impactLng');
     if (latIn) latIn.value = lat.toFixed(4);
@@ -2979,8 +2950,8 @@ async function runMultiScaleImpactAssessment(evt) {
             lat = selectedLat;
             lng = selectedLng;
         } else {
-            lat = 26.9057;
-            lng = 93.8170;
+            toast('Please click on the map or enter coordinates for impact assessment.', 'err');
+            return;
         }
     }
     const latIn = document.getElementById('impactLat');
@@ -3198,8 +3169,12 @@ async function runImpactAssessment(evt) {
 
 // ── 3. Action Plan Multi-Scale Escalation (5x5 -> 10x10 -> 25x25 -> 50x50 km) ──
 function syncActionCoordsFromMap() {
-    let lat = selectedLat != null ? selectedLat : parseFloat(document.getElementById('inputLat')?.value || 26.9057);
-    let lng = selectedLng != null ? selectedLng : parseFloat(document.getElementById('inputLng')?.value || 93.8170);
+    let lat = selectedLat != null ? selectedLat : parseFloat(document.getElementById('inputLat')?.value);
+    let lng = selectedLng != null ? selectedLng : parseFloat(document.getElementById('inputLng')?.value);
+    if (isNaN(lat) || isNaN(lng)) {
+        toast('Please click on the map or enter coordinates first.', 'err');
+        return;
+    }
     const latIn = document.getElementById('actionLat');
     const lngIn = document.getElementById('actionLng');
     if (latIn) latIn.value = lat.toFixed(4);
@@ -3222,8 +3197,8 @@ async function runMultiScaleActionPlan() {
             lat = selectedLat;
             lng = selectedLng;
         } else {
-            lat = 26.9057;
-            lng = 93.8170;
+            toast('Please click on the map or enter coordinates for action plan.', 'err');
+            return;
         }
     }
     const latIn = document.getElementById('actionLat');
@@ -4331,29 +4306,6 @@ document.getElementById('liveScanBtn')?.addEventListener('click', async () => {
     }
 });
 
-async function runDemoScan() {
-    const btn = document.getElementById('demoScanBtn');
-    const loader = document.getElementById('live-loader');
-    const loaderText = document.getElementById('live-loader-text');
-    const statusEl = document.getElementById('live-status');
-    if (btn) btn.disabled = true;
-    loader.classList.add('show');
-    loaderText.textContent = 'Running U-Net AI model on Sentinel-1 SAR radar imagery…';
-    statusEl.textContent = 'Processing real satellite radar flood data…';
-    try {
-        const res = await fetch('/api/demo-flood-scan', { method: 'POST' });
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        renderAIResponse(data, statusEl);
-        toast('Real Sentinel-1 SAR flood scan loaded!', 'ok', 2500);
-    } catch (err) {
-        statusEl.textContent = '❌ ' + err.message;
-        toast('Demo scan failed: ' + err.message, 'err');
-    } finally {
-        loader.classList.remove('show');
-        if (btn) btn.disabled = false;
-    }
-}
 // ════════════════════════════════════════════════════════════════════
 // Upload
 // ════════════════════════════════════════════════════════════════════
@@ -4620,12 +4572,17 @@ setInterval(checkEngine, 15000);
 // ════════════════════════════════════════════════════════════════════
 let hydroLayers = null;
 let hydroStationMarker = null;
-let hydroTarget = { lat: 26.9057, lng: 93.8170, name: 'Brahmaputra Basin (Assam)' };
+let hydroTarget = { lat: null, lng: null, name: '' };
 let hydroData = null;
 
 function initHydroTab() {
+    if (selectedLat != null && selectedLng != null && (hydroTarget.lat == null || hydroTarget.lng == null)) {
+        hydroTarget.lat = selectedLat;
+        hydroTarget.lng = selectedLng;
+        hydroTarget.name = `Station [${selectedLat.toFixed(2)}°, ${selectedLng.toFixed(2)}°]`;
+    }
     updateHydroTargetDisplay();
-    if (!hydroData) {
+    if (!hydroData && hydroTarget.lat != null && hydroTarget.lng != null) {
         loadHydrologyStation();
     }
 }
@@ -4638,8 +4595,12 @@ function updateHydroTargetDisplay() {
         latInp.value = hydroTarget.lat.toFixed(4);
         lngInp.value = hydroTarget.lng.toFixed(4);
     }
-    if (readout && hydroTarget.lat && hydroTarget.lng) {
-        readout.innerHTML = `<b>${Math.abs(hydroTarget.lat).toFixed(4)}° ${hydroTarget.lat >= 0 ? 'N' : 'S'}, ${Math.abs(hydroTarget.lng).toFixed(4)}° ${hydroTarget.lng >= 0 ? 'E' : 'W'}</b> · ${hydroTarget.name || 'Station'}`;
+    if (readout) {
+        if (hydroTarget.lat && hydroTarget.lng) {
+            readout.innerHTML = `<b>${Math.abs(hydroTarget.lat).toFixed(4)}° ${hydroTarget.lat >= 0 ? 'N' : 'S'}, ${Math.abs(hydroTarget.lng).toFixed(4)}° ${hydroTarget.lng >= 0 ? 'E' : 'W'}</b> · ${hydroTarget.name || 'Station'}`;
+        } else {
+            readout.innerHTML = `No station selected — click map`;
+        }
     }
 }
 
@@ -4661,6 +4622,10 @@ function syncHydroTargetFromInputs() {
 }
 
 async function loadHydrologyStation() {
+    if (hydroTarget.lat == null || hydroTarget.lng == null || isNaN(hydroTarget.lat) || isNaN(hydroTarget.lng)) {
+        toast('Please click on the map or enter coordinates to query river telemetry.', 'info');
+        return;
+    }
     const btn = document.getElementById('fetchHydroBtn');
     const loader = document.getElementById('hydro-loader');
     const results = document.getElementById('hydro-results');

@@ -17,15 +17,47 @@ let currentFactorsData = null;
 let timelineChartInstance = null;
 let autoRefreshTimer = null;
 
-// Authoritative global flood hotspot catchments
-const DEFAULT_HOTSPOTS = [
-    { name: "Brahmaputra / Kaziranga", country: "Assam, India", lat: 26.9057, lng: 93.8170, basin: "Brahmaputra Basin" },
-    { name: "Lower Mississippi Delta", country: "New Orleans, USA", lat: 29.9511, lng: -90.0715, basin: "Mississippi Delta" },
-    { name: "Lower Rhine Corridor", country: "Cologne, Germany", lat: 50.9375, lng: 6.9603, basin: "Rhine Catchment" },
-    { name: "Lower Indus Floodplain", country: "Sindh, Pakistan", lat: 27.7052, lng: 68.8574, basin: "Indus Basin" },
-    { name: "Guaíba Lagoon Catchment", country: "Porto Alegre, Brazil", lat: -30.0346, lng: -51.2177, basin: "Jacuí Basin" },
-    { name: "Pearl River Estuary", country: "Guangdong, China", lat: 23.1291, lng: 113.2644, basin: "Pearl River Delta" }
-];
+// Dynamic global flood hotspots fetched live from UN/EC GDACS
+let liveHotspots = [];
+
+async function loadLiveHotspots() {
+    try {
+        const resp = await fetch('/api/global-flood-hotspots');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data.hotspots && data.hotspots.length > 0) {
+            liveHotspots = data.hotspots;
+            renderHotspotSelectors(liveHotspots);
+        }
+    } catch (e) {
+        console.warn('Failed to fetch live GDACS flood hotspots:', e);
+    }
+}
+
+function renderHotspotSelectors(hotspots) {
+    const headerSel = document.getElementById('header-basin-select');
+    if (headerSel) {
+        headerSel.innerHTML = '<option value="">🌍 Select Active Live Flood Event (UN GDACS)...</option>' +
+            hotspots.map(h => {
+                const alertEmoji = h.alertlevel === 'Red' ? '🚨' : (h.alertlevel === 'Orange' ? '⚠️' : '🌊');
+                return `<option value="${h.lat}|${h.lng}|${h.name} (${h.country})">${alertEmoji} [${h.alertlevel || 'ACTIVE'}] ${h.name} (${h.country})</option>`;
+            }).join('');
+    }
+
+    const grid = document.getElementById('hotspots-grid-container');
+    if (grid) {
+        grid.innerHTML = hotspots.slice(0, 6).map(h => {
+            const alertColor = h.alertlevel === 'Red' ? '#ef4444' : (h.alertlevel === 'Orange' ? '#f59e0b' : '#38bdf8');
+            return `
+                <button class="hotspot-chip" onclick="selectHotspot(${h.lat}, ${h.lng}, '${h.name.replace(/'/g, "\\'")}')" style="border-left: 3px solid ${alertColor};">
+                    <span class="hotspot-name">${h.name}</span>
+                    <span class="hotspot-loc">${h.country} · ${Math.abs(h.lat).toFixed(2)}°${h.lat>=0?'N':'S'}, ${Math.abs(h.lng).toFixed(2)}°${h.lng>=0?'E':'W'}</span>
+                </button>
+            `;
+        }).join('');
+    }
+}
+
 
 function initPredictLayers() {
     if (typeof map === 'undefined' || !map) return;
@@ -84,13 +116,13 @@ async function runUnifiedPrediction() {
     const radiusInput = document.getElementById('predictRadius');
     const includeSarCheck = document.getElementById('includeSarCheck');
 
-    const lat = parseFloat(latInput ? latInput.value : 26.9057);
-    const lng = parseFloat(lngInput ? lngInput.value : 93.8170);
+    const lat = parseFloat(latInput ? latInput.value : NaN);
+    const lng = parseFloat(lngInput ? lngInput.value : NaN);
     const radius = radiusInput ? parseFloat(radiusInput.value) : 5.0;
     const runSar = includeSarCheck ? includeSarCheck.checked : true;
 
     if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-        toast('Please enter valid coordinates (-90 to 90 lat, -180 to 180 lng)', 'err');
+        toast('Please click on the map or select an active flood hotspot first.', 'err');
         return;
     }
 
@@ -1012,12 +1044,18 @@ function updateExecutiveCardWithPrediction(data) {
 
     const latIn = document.getElementById('predictLat');
     const lngIn = document.getElementById('predictLng');
-    const lat = latIn ? parseFloat(latIn.value) : 26.9057;
-    const lng = lngIn ? parseFloat(lngIn.value) : 93.8170;
+    const lat = latIn && latIn.value ? parseFloat(latIn.value) : (data.location?.lat ?? null);
+    const lng = lngIn && lngIn.value ? parseFloat(lngIn.value) : (data.location?.lng ?? null);
 
-    const matched = DEFAULT_HOTSPOTS.find(h => Math.abs(h.lat - lat) < 0.1 && Math.abs(h.lng - lng) < 0.1);
+    const matched = liveHotspots.find(h => lat != null && lng != null && Math.abs(h.lat - lat) < 0.2 && Math.abs(h.lng - lng) < 0.2);
     if (targetName) {
-        targetName.textContent = matched ? `${matched.name} (${matched.country})` : `Basin Footprint [${lat.toFixed(4)}°, ${lng.toFixed(4)}°]`;
+        if (matched) {
+            targetName.textContent = `${matched.name} (${matched.country})`;
+        } else if (lat != null && lng != null) {
+            targetName.textContent = `Basin Footprint [${lat.toFixed(4)}°, ${lng.toFixed(4)}°]`;
+        } else {
+            targetName.textContent = `Basin Analysis`;
+        }
     }
 
     const sev = pred.severity || 'LOW';
@@ -1105,9 +1143,13 @@ function centerMapOnPrediction() {
     } else {
         const latIn = document.getElementById('predictLat');
         const lngIn = document.getElementById('predictLng');
-        const lat = latIn ? parseFloat(latIn.value) : 26.9057;
-        const lng = lngIn ? parseFloat(lngIn.value) : 93.8170;
-        map.flyTo([lat, lng], 12, { duration: 1.0 });
+        const lat = latIn && latIn.value ? parseFloat(latIn.value) : null;
+        const lng = lngIn && lngIn.value ? parseFloat(lngIn.value) : null;
+        if (lat != null && lng != null && !isNaN(lat) && !isNaN(lng)) {
+            map.flyTo([lat, lng], 12, { duration: 1.0 });
+        } else {
+            toast('No prediction location set. Click map or select a live disaster.', 'info');
+        }
     }
 }
 
@@ -1119,13 +1161,13 @@ async function startComprehensiveFloodAssessment() {
     const radiusInput = document.getElementById('predictRadius');
     const includeSarCheck = document.getElementById('includeSarCheck');
 
-    const lat = parseFloat(latInput ? latInput.value : 26.9057);
-    const lng = parseFloat(lngInput ? lngInput.value : 93.8170);
+    const lat = parseFloat(latInput ? latInput.value : NaN);
+    const lng = parseFloat(lngInput ? lngInput.value : NaN);
     const radius = radiusInput ? parseFloat(radiusInput.value) : 5.0;
     const runSar = includeSarCheck ? includeSarCheck.checked : true;
 
     if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-        toast('Please enter valid coordinates (-90 to 90 lat, -180 to 180 lng)', 'err');
+        toast('Please click on the map or select an active disaster hotspot to assess.', 'err');
         return;
     }
 
@@ -1227,11 +1269,11 @@ async function startProgressiveFloodScan() {
 
     const latIn = document.getElementById('predictLat');
     const lngIn = document.getElementById('predictLng');
-    const lat = parseFloat(latIn ? latIn.value : 26.9057);
-    const lng = parseFloat(lngIn ? lngIn.value : 93.8170);
+    const lat = parseFloat(latIn ? latIn.value : NaN);
+    const lng = parseFloat(lngIn ? lngIn.value : NaN);
 
     if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-        toast('Please enter valid coordinates (-90 to 90 lat, -180 to 180 lng)', 'err');
+        toast('Please click on the map or select an active flood hotspot first.', 'err');
         return;
     }
 
@@ -1655,7 +1697,7 @@ async function openProvenanceDrawer() {
 
     const latIn = document.getElementById('predictLat');
     const lngIn = document.getElementById('predictLng');
-    if (targetEl) targetEl.textContent = `${latIn?.value || '26.9057'}°, ${lngIn?.value || '93.8170'}°`;
+    if (targetEl) targetEl.textContent = (latIn?.value && lngIn?.value) ? `${latIn.value}°, ${lngIn.value}°` : 'Global';
 
     try {
         const url = activeProgressiveScanId ? `/api/scan/provenance/${activeProgressiveScanId}` : `/api/scan/provenance-global`;
@@ -1717,13 +1759,5 @@ function closeProvenanceDrawer() {
 // Global initialization on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
     initPredictLayers();
-    const latIn = document.getElementById('predictLat');
-    const lngIn = document.getElementById('predictLng');
-    if (latIn && !latIn.value) latIn.value = '26.9057';
-    if (lngIn && !lngIn.value) lngIn.value = '93.8170';
-
-    // Load initial MongoDB history for Assam
-    setTimeout(() => {
-        fetchMongoHistory(26.9057, 93.8170);
-    }, 1500);
+    loadLiveHotspots();
 });

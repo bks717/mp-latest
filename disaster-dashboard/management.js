@@ -33,27 +33,7 @@ db.exec(`
 `);
 console.log(`📦 Management DB ready: ${DB_PATH}`);
 
-// Seed baseline emergency resources if newly created
-const countInv = db.prepare(`SELECT count(*) as count FROM inventory`).get().count;
-if (countInv === 0) {
-    const seedInv = db.prepare(`INSERT INTO inventory (item_name, quantity, location, last_updated) VALUES (?, ?, ?, ?)`);
-    const now = new Date().toISOString();
-    seedInv.run('Inflatable Motorized Rescue Boats (Zodiac 40HP)', 12, 'District EOC Depot', now);
-    seedInv.run('Submersible High-Volume De-watering Pumps (5000 L/min)', 8, 'Flood Control Base', now);
-    seedInv.run('FEMA/WHO Emergency First Aid Trauma Kits', 450, 'Red Cross Medical Cache', now);
-    seedInv.run('Potable Water Purification Sachets (10,000L capacity)', 2500, 'Civil Supplies Store', now);
-    seedInv.run('Woven Polypropylene Flood Sandbags (Filled)', 6000, 'Irrigation & Flood Control Base', now);
-    seedInv.run('Ready-to-Eat Emergency Ration Packs (MRE)', 3200, 'State Disaster Response Depot', now);
-}
-
-const countPers = db.prepare(`SELECT count(*) as count FROM personnel`).get().count;
-if (countPers === 0) {
-    const seedPers = db.prepare(`INSERT INTO personnel (name, role, status, assigned_zone) VALUES (?, ?, ?, ?)`);
-    seedPers.run('Commander Rajesh Sharma', 'Incident Commander', 'Active / Operational', 'District EOC Command');
-    seedPers.run('Dr. Ananya Baruah', 'Chief Medical Officer', 'On Standby', 'District General Hospital');
-    seedPers.run('Inspector Bikram Das', 'Water Rescue Lead', 'Deployed', 'Riverine Sector Alpha');
-    seedPers.run('Officer Priya Sen', 'Logistics Coordinator', 'Active', 'Central Relief Depot');
-}
+// Management tables initialized without artificial seed data
 
 // ── Inventory CRUD ───────────────────────────────────────────────────────
 const insertInv = db.prepare(`INSERT INTO inventory (item_name, quantity, location, last_updated) VALUES (@item_name, @quantity, @location, @last_updated)`);

@@ -58,37 +58,6 @@ app.post('/api/analyze-satellite', upload.single('satelliteImage'), async (req, 
     }
 });
 
-// POST /api/demo-flood-scan
-app.post('/api/demo-flood-scan', async (req, res) => {
-    try {
-        console.log('⚡ Loading real Sentinel-1 SAR demo flood scan...');
-        const filePath = path.join(__dirname, 'real_flood_test.tif');
-        if (!fs.existsSync(filePath)) {
-            return res.status(404).json({ error: 'Demo TIFF file not found.' });
-        }
-        const fileBuf = fs.readFileSync(filePath);
-        const formData = new FormData();
-        formData.append('file', fileBuf, { filename: 'real_flood_test.tif' });
-
-        const aiResponse = await axios.post(AI_API_URL + '/predict', formData, {
-            headers: { ...formData.getHeaders() },
-            timeout: 300_000,
-        });
-
-        const data = aiResponse.data;
-        if (data.summary) {
-            logScan({
-                scan_type: 'demo',
-                filename: 'real_flood_test.tif',
-                summary: data.summary,
-            });
-        }
-        res.json(data);
-    } catch (error) {
-        console.error('🚨 Error communicating with AI Engine (demo):', error.message);
-        res.status(500).json({ error: 'Failed to process demo image through AI.' });
-    }
-});
 
 
 // ── Live Satellite Scan ───────────────────────────────────────────────────────
@@ -281,6 +250,17 @@ app.get('/api/global-prediction/history', async (req, res) => {
     } catch (error) {
         console.error('🚨 Error fetching global prediction history:', error.message);
         res.status(500).json({ error: 'Failed to retrieve global prediction history: ' + error.message });
+    }
+});
+// GET /api/global-flood-hotspots
+// Proxies live UN/EC GDACS Active Floods telemetry directly from AI API
+app.get('/api/global-flood-hotspots', async (req, res) => {
+    try {
+        const aiResponse = await axios.get(AI_API_URL + '/global-flood-hotspots', { timeout: 30_000 });
+        res.json(aiResponse.data);
+    } catch (error) {
+        console.error('🚨 Error fetching live flood hotspots from GDACS:', error.message);
+        res.status(500).json({ error: 'Failed to retrieve live flood hotspots: ' + error.message });
     }
 });
 
@@ -706,8 +686,7 @@ app.all(['/api/hydrology-station', '/api/drone-recon'], async (req, res) => {
         }
 
         if (isNaN(lat) || isNaN(lng)) {
-            lat = 26.9057;
-            lng = 93.8170;
+            return res.status(400).json({ error: 'Valid latitude and longitude are required for live Copernicus GloFAS telemetry.' });
         }
 
         console.log(`🌊 Fetching live Copernicus GloFAS river discharge & telemetry for [${lat.toFixed(4)}, ${lng.toFixed(4)}]...`);

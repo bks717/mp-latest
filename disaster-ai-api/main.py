@@ -1,8 +1,11 @@
 import sys
 import json
+import math
+import logging
 import requests
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
+logger = logging.getLogger("DisasterAPI")
 from typing import Dict, List, Any, Optional, Tuple
 import torch
 import rasterio
@@ -551,19 +554,66 @@ async def predict_disaster(request: PredictDisasterRequest):
         traceback.print_exc()
         return {"status": "error", "error": str(e)}
 
-def run_sar_tile_inference(tif_path: str = "real_flood_test_v4_tif_file.tif", target_lat: float = None, target_lng: float = None):
-    """Runs genuine U-Net inference on Sentinel-1 SAR tile (trained on Sen1Floods11)"""
-    import os
-    if not os.path.exists(tif_path):
-        return None
+def run_live_sentinel1_inference(bbox: List[float]) -> Dict[str, Any]:
+    """
+    Runs genuine U-Net inference on real-time Sentinel-1 SAR imagery fetched
+    directly from Microsoft Planetary Computer STAC catalog.
+    Returns empty/unavailable if no scene exists — ZERO hardcoded data.
+    """
+    empty_result = {
+        "active": False,
+        "flooded_area_km2": 0.0,
+        "zones_count": 0,
+        "severity": "None",
+        "features": [],
+        "summary": {
+            "total_flood_zones": 0,
+            "total_area_km2": 0.0,
+            "overall_severity": "None",
+            "danger_breakdown": {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
+        },
+        "status": "UNAVAILABLE",
+        "message": "No recent Sentinel-1 SAR overpass found in catalog for this bbox."
+    }
     try:
-        with rasterio.open(tif_path) as src:
-            image = src.read()
-            transform = src.transform
-            crs = str(src.crs) if src.crs else "EPSG:4326"
-            image = np.nan_to_num(image)
-            image = np.clip(image, -30, 0)
-            image = (image + 30) / 30.0
+        catalog = Client.open(
+            "https://planetarycomputer.microsoft.com/api/stac/v1",
+            modifier=pc.sign_inplace
+        )
+        search = catalog.search(
+            collections=["sentinel-1-rtc"],
+            bbox=bbox,
+            datetime="2023-01-01/2026-12-31",
+            sortby=[{"field": "datetime", "direction": "desc"}],
+            limit=1
+        )
+        items = list(search.items())
+        if not items:
+            return empty_result
+
+        item = items[0]
+        vv_href = item.assets["vv"].href
+        vh_href = item.assets["vh"].href
+
+        vv_ds = rioxarray.open_rasterio(vv_href)
+        vh_ds = rioxarray.open_rasterio(vh_href)
+        bbox_geom = box(*bbox)
+        bbox_gdf = gpd.GeoDataFrame(geometry=[bbox_geom], crs="EPSG:4326")
+        bbox_gdf_proj = bbox_gdf.to_crs(vv_ds.rio.crs)
+        proj_bbox = tuple(bbox_gdf_proj.total_bounds)
+        vv_clipped = vv_ds.rio.clip_box(*proj_bbox)
+        vh_clipped = vh_ds.rio.clip_box(*proj_bbox)
+        vv_data = vv_clipped.values.squeeze()
+        vh_data = vh_clipped.values.squeeze()
+        transform = vv_clipped.rio.transform()
+        source_crs = str(vv_ds.rio.crs)
+
+        image = np.stack([vv_data, vh_data], axis=0)
+        epsilon = 1e-10
+        image = 10 * np.log10(np.clip(image, a_min=epsilon, a_max=None))
+        image = np.nan_to_num(image)
+        image = np.clip(image, -30, 0)
+        image = (image + 30) / 30.0
 
         image_tensor = build_model_input(image[0], image[1])
         predicted_mask = run_inference(image_tensor)
@@ -573,19 +623,21 @@ def run_sar_tile_inference(tif_path: str = "real_flood_test_v4_tif_file.tif", ta
             if value == 1.0
         ]
         if not raw_polygons:
-            return {"active": False, "flooded_area_km2": 0.0, "zones_count": 0}
-        gdf = filter_polygons(raw_polygons, crs)
-        if gdf.empty:
-            return {"active": False, "flooded_area_km2": 0.0, "zones_count": 0}
+            res = dict(empty_result)
+            res["status"] = "AVAILABLE"
+            res["message"] = "Sentinel-1 SAR scene analyzed: No floodwater inundation detected."
+            res["scene_id"] = item.id
+            res["acquisition_time"] = str(item.datetime)
+            return res
 
-        # If target coordinates provided, translate polygons to center on target catchment
-        if target_lat is not None and target_lng is not None:
-            tile_lat, tile_lng = 26.8833, 93.8042
-            d_lat = target_lat - tile_lat
-            d_lng = target_lng - tile_lng
-            if abs(d_lat) > 0.03 or abs(d_lng) > 0.03:
-                from shapely.affinity import translate
-                gdf['geometry'] = gdf['geometry'].apply(lambda g: translate(g, xoff=d_lng, yoff=d_lat))
+        gdf = filter_polygons(raw_polygons, source_crs)
+        if gdf.empty:
+            res = dict(empty_result)
+            res["status"] = "AVAILABLE"
+            res["message"] = "Sentinel-1 SAR scene analyzed: Filtered permanent water / dry land."
+            res["scene_id"] = item.id
+            res["acquisition_time"] = str(item.datetime)
+            return res
 
         features, summary = build_features(gdf)
         return {
@@ -594,11 +646,25 @@ def run_sar_tile_inference(tif_path: str = "real_flood_test_v4_tif_file.tif", ta
             "zones_count": summary.get("total_flood_zones", 0),
             "severity": summary.get("overall_severity", "None"),
             "features": features,
-            "summary": summary
+            "summary": summary,
+            "status": "AVAILABLE",
+            "scene_id": item.id,
+            "acquisition_time": str(item.datetime)
         }
     except Exception as e:
-        print(f"⚠️ SAR inference error: {e}")
-        return None
+        logger.warning(f"Live Sentinel-1 acquisition/inference notice: {e}")
+        err_res = dict(empty_result)
+        err_res["message"] = f"Live satellite STAC query: {e}"
+        return err_res
+
+def run_sar_tile_inference(target_lat: float = None, target_lng: float = None, radius_km: float = 5.0):
+    """Compatibility wrapper that executes live Sentinel-1 satellite inference for coordinates"""
+    if target_lat is None or target_lng is None:
+        return {"active": False, "flooded_area_km2": 0.0, "zones_count": 0, "status": "UNAVAILABLE", "message": "No coordinates provided for live SAR scan"}
+    d_lat = radius_km / 111.0
+    d_lon = radius_km / (111.0 * max(0.2, math.cos(math.radians(target_lat))))
+    bbox = [round(target_lng - d_lon, 5), round(target_lat - d_lat, 5), round(target_lng + d_lon, 5), round(target_lat + d_lat, 5)]
+    return run_live_sentinel1_inference(bbox)
 
 # ─────────────────────────────────────────────
 # Endpoint 7: Unified Real-Time Flood Prediction & Management
@@ -624,7 +690,10 @@ async def unified_prediction(request: UnifiedPredictionRequest):
         # 2. SAR U-Net Satellite Inundation Evidence (Deep Learning Component)
         sar_res = None
         if run_sar:
-            sar_res = run_sar_tile_inference()
+            d_lat = radius / 111.0
+            d_lon = radius / (111.0 * max(0.2, math.cos(math.radians(lat))))
+            bbox = [round(lon - d_lon, 5), round(lat - d_lat, 5), round(lon + d_lon, 5), round(lat + d_lat, 5)]
+            sar_res = run_live_sentinel1_inference(bbox)
 
         # 3. Transparent Multi-Factor Hydrological Flood Risk Scoring Engine
         risk_res = risk_engine.evaluate_multi_horizon_risk(temporal_data, satellite_evidence=sar_res)
@@ -730,66 +799,35 @@ async def get_live_factors(lat: float, lng: float, radius_km: float = 6.0):
 
 @app.get("/global-flood-hotspots")
 async def get_global_flood_hotspots():
-    return {
-        "hotspots": [
-            {
-                "name": "Brahmaputra River Basin, Assam",
-                "country": "India",
-                "lat": 26.9057,
-                "lng": 93.8170,
-                "basin": "Brahmaputra / Kaziranga Catchment",
-                "risk_type": "Monsoonal Fluvial Torrent & Embankment Overtopping",
-                "description": "Dynamic braided river corridor with high seasonal flood vulnerability"
-            },
-            {
-                "name": "Lower Mississippi Basin, New Orleans",
-                "country": "United States",
-                "lat": 29.9511,
-                "lng": -90.0715,
-                "basin": "Mississippi River Delta / Pontchartrain",
-                "risk_type": "Storm Surge & River Stage Convergence",
-                "description": "Low-lying coastal delta below sea level, protected by levees"
-            },
-            {
-                "name": "Rhine River Catchment, Cologne",
-                "country": "Germany",
-                "lat": 50.9375,
-                "lng": 6.9603,
-                "basin": "Lower Rhine River Basin",
-                "risk_type": "Pluvial & Fluvial Winter Inundation",
-                "description": "Dense urbanized European commercial waterway corridor"
-            },
-            {
-                "name": "Indus River Basin, Sukkur Barrage",
-                "country": "Pakistan",
-                "lat": 27.7052,
-                "lng": 68.8574,
-                "basin": "Lower Indus Floodplain",
-                "risk_type": "Extreme Inundation & Embankment Breaches",
-                "description": "Historically catastrophic floodplain with extensive agricultural exposure"
-            },
-            {
-                "name": "Rio Grande do Sul Catchment, Porto Alegre",
-                "country": "Brazil",
-                "lat": -30.0346,
-                "lng": -51.2177,
-                "basin": "Guaíba River / Jacuí Basin",
-                "risk_type": "Catastrophic Basin Inundation & Lagoon Surge",
-                "description": "Major urban basin with high recent flood recurrence"
-            },
-            {
-                "name": "Pearl River Delta, Guangdong",
-                "country": "China",
-                "lat": 23.1291,
-                "lng": 113.2644,
-                "basin": "Pearl River (Zhujiang) Basin",
-                "risk_type": "Typhoon Storm Surge & Fluvial Torrent",
-                "description": "Megacity industrial delta with complex estuarine hydrodynamics"
-            }
-        ]
-    }
+    """Fetches real-world active global flood hotspots live from UN/EC GDACS."""
+    try:
+        url = "https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=FL&alertlevel=Green;Orange;Red"
+        r = requests.get(url, headers={"User-Agent": "FloodWatch/3.0"}, timeout=8)
+        if r.status_code == 200:
+            features = r.json().get("features", [])
+            hotspots = []
+            for f in features:
+                props = f.get("properties", {})
+                geom = f.get("geometry", {})
+                coords = geom.get("coordinates", [])
+                if coords and len(coords) >= 2:
+                    hotspots.append({
+                        "name": props.get("eventname") or f"Active Flood in {props.get('country')}",
+                        "country": props.get("country", "Global"),
+                        "lat": round(float(coords[1]), 4),
+                        "lng": round(float(coords[0]), 4),
+                        "basin": props.get("eventname", "Active Flood Zone"),
+                        "risk_type": f"GDACS Alert Level: {props.get('alertlevel', 'Normal')}",
+                        "description": f"Active real-world flood event recorded by UN/EC GDACS ({props.get('fromdate', '')} to {props.get('todate', '')}).",
+                        "alert_level": props.get("alertlevel"),
+                        "event_id": props.get("eventid")
+                    })
+            if hotspots:
+                return {"hotspots": hotspots}
+    except Exception as e:
+        logger.warning(f"Live GDACS hotspots fetch error: {e}")
+    return {"hotspots": []}
 
-# ─────────────────────────────────────────────
 # ─────────────────────────────────────────────
 # Helper: Geodesic Stage Calculation & Annular Deduplication
 # ─────────────────────────────────────────────
@@ -805,11 +843,11 @@ def get_geodesic_stage_info(lat: float, lng: float, km: float, prev_km: float = 
     d_lat = half_km / 111.132
     d_lon = half_km / (111.320 * cos_lat)
     bbox = [float(round(lng - d_lon, 5)), float(round(lat - d_lat, 5)), float(round(lng + d_lon, 5)), float(round(lat + d_lat, 5))]
-    
+
     total_area_km2 = float(km * km)
     prev_area_km2 = float(prev_km * prev_km) if prev_km > 0 else 0.0
     new_area_km2 = total_area_km2 - prev_area_km2
-    
+
     return {
         "extent_km": km,
         "bbox": bbox,
@@ -818,24 +856,14 @@ def get_geodesic_stage_info(lat: float, lng: float, km: float, prev_km: float = 
         "new_analyzed_area_km2": new_area_km2
     }
 
-def check_benchmark_sar_overlap(bbox: List[float]) -> bool:
-    """
-    Checks if stage bbox intersects the Sentinel-1 Assam benchmark GeoTIFF
-    Tile bounds: [93.78124, 26.86035, 93.82723, 26.90634]
-    """
-    min_lon, min_lat, max_lon, max_lat = bbox
-    t_min_lon, t_min_lat, t_max_lon, t_max_lat = 93.78124, 26.86035, 93.82723, 26.90634
-    return not (max_lon < t_min_lon or min_lon > t_max_lon or max_lat < t_min_lat or min_lat > t_max_lat)
-
 def fetch_sentinel1_stac_scene(lat: float, lng: float, extent_km: float = 50.0) -> dict:
     """
     Authoritative query for Sentinel-1 GRD imagery.
     1. Primary: AWS Element84 Earth Search STAC (official Copernicus Sentinel-1 archive, open, zero rate limits).
     2. Secondary: Microsoft Planetary Computer STAC.
-    3. Fallback: Deterministic ESA Copernicus 12-day orbital cycle ephemeris.
     """
     bbox = get_geodesic_stage_info(lat, lng, extent_km)["bbox"]
-    
+
     # Provider 1: AWS Element84 Earth Search (Copernicus Sentinel-1 GRD)
     try:
         url = "https://earth-search.aws.element84.com/v1/search"
@@ -864,7 +892,7 @@ def fetch_sentinel1_stac_scene(lat: float, lng: float, extent_km: float = 50.0) 
                     "data_freshness": "RECENT"
                 }
     except Exception as e:
-        print(f"Earth Search notice: {e}")
+        logger.info(f"Earth Search notice: {e}")
 
     # Provider 2: Microsoft Planetary Computer STAC
     try:
@@ -894,21 +922,19 @@ def fetch_sentinel1_stac_scene(lat: float, lng: float, extent_km: float = 50.0) 
                 "data_freshness": "RECENT"
             }
     except Exception as e:
-        print(f"Planetary Computer notice: {e}")
+        logger.info(f"Planetary Computer notice: {e}")
 
-    # Provider 3: Deterministic ESA Copernicus Orbital Pass Geometry
-    from datetime import datetime, timezone
-    now_utc = datetime.now(timezone.utc)
-    rel_orbit = int(abs(lng * 3.7 + lat * 2.1) % 175) + 1
+    # Truthful reporting when no satellite pass exists for this region
     return {
-        "source": "Copernicus Sentinel-1 Orbital Cycle",
-        "scene_id": f"S1A_IW_GRDH_1SDV_{now_utc.strftime('%Y%m%d')}T001824_{rel_orbit:03d}_IN",
-        "acquisition_time": now_utc.strftime("%Y-%m-%dT00:18:24Z"),
-        "platform": "Sentinel-1A",
+        "source": "ESA Copernicus Sentinel-1 STAC",
+        "scene_id": None,
+        "acquisition_time": None,
+        "platform": "Sentinel-1",
         "polarizations": "VV+VH",
-        "orbit": "Ascending" if lat > 0 else "Descending",
-        "status": "AVAILABLE",
-        "data_freshness": "RECENT"
+        "orbit": None,
+        "status": "UNAVAILABLE",
+        "data_freshness": "NOT_AVAILABLE",
+        "status_description": "No recent Sentinel-1 SAR overpass cataloged for this area."
     }
 
 # ─────────────────────────────────────────────
@@ -923,43 +949,40 @@ class MultiScaleSarRequest(BaseModel):
 async def sar_multiscale(request: MultiScaleSarRequest):
     lat, lng = request.lat, request.lng
     print(f"🛰️ Multi-Scale SAR Radar Analysis for [{lat:.4f}, {lng:.4f}] across 5, 10, 25, 50 km...")
-    
+
     extents = [5, 10, 25, 50]
     stage_labels = ["01 CORE (5×5 km)", "02 CATCHMENT (10×10 km)", "03 SUB-BASIN (25×25 km)", "04 MACRO (50×50 km)"]
-    
-    # 1. Authoritative STAC catalog query for genuine Sentinel-1 scene pass
+
+    # 1. Authoritative live STAC catalog query for genuine Sentinel-1 scene pass
     stac_info = fetch_sentinel1_stac_scene(lat, lng, 50.0)
-    
-    # 2. Run Sentinel-1 C-band SAR U-Net deep learning inference
-    has_benchmark_tile = check_benchmark_sar_overlap([lng - 0.05, lat - 0.05, lng + 0.05, lat + 0.05])
-    if has_benchmark_tile:
-        sar_res = run_sar_tile_inference("real_flood_test_v4_tif_file.tif")
-    else:
-        sar_res = run_sar_tile_inference("real_flood_test_v4_tif_file.tif", target_lat=lat, target_lng=lng)
-        
+
+    # 2. Run Sentinel-1 C-band SAR U-Net deep learning inference if imagery is cataloged
     all_features = []
-    if sar_res and sar_res.get("features"):
-        all_features = sar_res["features"]
-    
-    flooded_km2 = sar_res.get("flooded_area_km2", 0.5038) if sar_res else 0.5038
-    
+    flooded_km2 = 0.0
+    sar_res = None
+
+    if stac_info.get("status") == "AVAILABLE":
+        core_bbox = get_geodesic_stage_info(lat, lng, 10.0)["bbox"]
+        sar_res = run_live_sentinel1_inference(core_bbox)
+        if sar_res and sar_res.get("features"):
+            all_features = sar_res["features"]
+            flooded_km2 = sar_res.get("flooded_area_km2", 0.0)
+
     stages = []
     for idx, km in enumerate(extents):
         prev_km = extents[idx - 1] if idx > 0 else 0.0
         stage_geo = get_geodesic_stage_info(lat, lng, km, prev_km)
         bbox = stage_geo["bbox"]
 
-        # Classification of data provenance & status
-        if has_benchmark_tile:
-            scene_id = "S1A_IW_GRDH_1SDV_20240702T001824_ASSAM"
-            acq_time = "2024-07-02T00:18:24Z"
-            freshness = "ARCHIVE_BENCHMARK"
-            status_desc = f"Verified Sentinel-1 C-band SAR dual-polarization backscatter segmentation ({flooded_km2:.2f} km² water)."
-        else:
-            scene_id = stac_info.get("scene_id", "S1A_IW_GRDH_1SDV_IN")
-            acq_time = stac_info.get("acquisition_time", "2026-09-25T11:48:25Z")
-            freshness = stac_info.get("data_freshness", "RECENT")
+        is_avail = (stac_info.get("status") == "AVAILABLE")
+        scene_id = stac_info.get("scene_id")
+        acq_time = stac_info.get("acquisition_time")
+        freshness = stac_info.get("data_freshness", "NOT_AVAILABLE")
+
+        if is_avail:
             status_desc = f"Verified Sentinel-1 C-band SAR pass ({stac_info.get('orbit')}, {stac_info.get('polarizations')}) with U-Net backscatter segmentation ({flooded_km2:.2f} km² water)."
+        else:
+            status_desc = "No recent Sentinel-1 C-band SAR satellite overpass cataloged for this area."
 
         stages.append({
             "stage_idx": idx,
@@ -972,27 +995,27 @@ async def sar_multiscale(request: MultiScaleSarRequest):
                 "new_analyzed_area_km2": stage_geo["new_analyzed_area_km2"]
             },
             "satellite_radar_sar": {
-                "status": stac_info.get("status", "AVAILABLE"),
+                "status": "AVAILABLE" if is_avail else "UNAVAILABLE",
                 "data_freshness": freshness,
                 "scene_id": scene_id,
                 "acquisition_time": acq_time,
-                "platform": stac_info.get("platform", "Sentinel-1A"),
+                "platform": stac_info.get("platform", "Sentinel-1"),
                 "polarizations": stac_info.get("polarizations", "VV+VH"),
-                "orbit": stac_info.get("orbit", "Ascending"),
+                "orbit": stac_info.get("orbit"),
                 "resolution": "10 meters C-band (5.405 GHz)",
                 "status_description": status_desc,
-                "flooded_area_km2": flooded_km2,
+                "flooded_area_km2": flooded_km2 if is_avail else 0.0,
                 "model": "EfficientNet-B3 U-Net (Trained on Sen1Floods11 dual-polarization backscatter)"
             }
         })
-        
+
     summary = sar_res.get("summary", {}) if sar_res else {
         "total_flood_zones": len(all_features),
         "total_area_km2": round(flooded_km2, 4),
-        "overall_severity": "Medium",
+        "overall_severity": "None" if flooded_km2 == 0.0 else "Medium",
         "danger_breakdown": {"Low": len(all_features), "Medium": 0, "High": 0, "Critical": 0}
     }
-        
+
     return {
         "status": "success",
         "coordinates": {"lat": lat, "lng": lng},
@@ -1015,18 +1038,15 @@ async def impact_multiscale(request: MultiScaleImpactRequest):
     lat, lng = request.lat, request.lng
     depth = request.estimated_depth_m
     print(f"📊 Multi-Scale Spatial Impact Assessment for [{lat:.4f}, {lng:.4f}] (depth={depth}m) across 5, 10, 25, 50 km...")
-    
+
     extents = [5, 10, 25, 50]
     stage_labels = ["01 CORE (5×5 km)", "02 CATCHMENT (10×10 km)", "03 SUB-BASIN (25×25 km)", "04 MACRO (50×50 km)"]
-    
-    # Check for genuine flood features from benchmark tile or hydrology
-    has_benchmark_tile = check_benchmark_sar_overlap([lng - 0.05, lat - 0.05, lng + 0.05, lat + 0.05])
-    if has_benchmark_tile:
-        sar_res = run_sar_tile_inference("real_flood_test_v4_tif_file.tif")
-    else:
-        sar_res = run_sar_tile_inference("real_flood_test_v4_tif_file.tif", target_lat=lat, target_lng=lng)
+
+    # Query live Sentinel-1 inference for the core catchment
+    core_bbox = get_geodesic_stage_info(lat, lng, 10.0)["bbox"]
+    sar_res = run_live_sentinel1_inference(core_bbox)
     flood_features = sar_res.get("features", []) if sar_res and sar_res.get("active") else []
-    
+
     # Zero fabrication rule: if no flood detected, flood_gdf is strictly EMPTY
     flood_gdf = gpd.GeoDataFrame.from_features(flood_features) if flood_features else gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
     if not flood_gdf.empty and flood_gdf.crs is None:
