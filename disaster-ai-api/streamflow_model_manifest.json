@@ -1,0 +1,33 @@
+{
+  "architecture": "Encoder-Decoder State-Handoff LSTM",
+  "benchmark_corpus": "Caravan & CAMELS Global Hydrometric Gauge Parameterization Suite",
+  "observation_baseline_window": "1981-2020 (Official Caravan Coverage)",
+  "training_target_description": "Caravan-parameterized physical rainfall-runoff benchmark simulation (N=5,100 synthetic events)",
+  "split_specification": {
+    "total_samples": 5100,
+    "train_samples": 3500,
+    "validation_samples": 800,
+    "holdout_test_samples": 800,
+    "climate_regimes": ["monsoon", "temperate", "alpine", "arid", "coastal"],
+    "leakage_prevention": "Strict seed-isolated out-of-sample partitioning with separate dynamic meteorological realizations. No temporal overlap or basin leakage between splits."
+  },
+  "simulator_fit_metrics": {
+    "mean_nse": 0.992,
+    "mean_kge": 0.980,
+    "nse_h24": 0.990,
+    "nse_h48": 0.994,
+    "nse_h72": 0.992,
+    "loss_function": "Mean Squared Error on log1p-normalized discharge (m3/s / Q_mean)",
+    "evaluation_note": "Evaluated against physical rainfall-runoff benchmark simulator equations. Demonstrates neural network learning of hydrologic flow dynamics with zero residual equation variance. Must NOT be presented as real-world noisy in-situ gauge accuracy."
+  },
+  "published_literature_real_gauge_benchmark": {
+    "median_nse_caravan": "0.74 - 0.82",
+    "citation": "Kratzert et al. 2023; Nearing et al. Nature 2024",
+    "gauge_noise_factors": "Real-world in-situ gauge records exhibit rating curve hysteresis, unmeasured human withdrawals, dam regulations, and instrument calibration drift."
+  },
+  "temporal_coverage_audit": {
+    "caravan_official_coverage": "1981-01-01 to 2020-12-31",
+    "post_2020_streamflow_status": "No Caravan observed gauge data exists beyond 2020. Operational post-2020 live predictions utilize live ECMWF IFS 9km deterministic numerical weather forecasts and GloFAS 4.0 / ERA5 reanalysis baselines."
+  },
+  "weights_file": "streamflow_forecast_lstm.pth"
+}

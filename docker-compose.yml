@@ -1,0 +1,40 @@
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: floodwatch-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+  api:
+    build: 
+      context: ./disaster-ai-api
+    container_name: floodwatch-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./disaster-ai-api:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  dashboard:
+    build: 
+      context: ./disaster-dashboard
+    container_name: floodwatch-dashboard
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./disaster-dashboard:/app
+    environment:
+      - API_URL=http://api:8000
+      - MONGO_URI=mongodb://mongodb:27017/floodwatch
+    depends_on:
+      - api
+      - mongodb
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
