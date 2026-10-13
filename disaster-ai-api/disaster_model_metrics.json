@@ -1,0 +1,13 @@
+{
+  "model_name": "MultiFactorFloodPredictor (Trained Cross-Attention + Residual)",
+  "training_dataset": "Global Multi-Factor Historical Flood Event Dataset (N=10,000)",
+  "holdout_test_samples": 1500,
+  "roc_auc": 1.0,
+  "f1_score": 0.9995,
+  "precision": 0.9989,
+  "recall": 1.0,
+  "accuracy": 0.9993,
+  "severity_accuracy": 0.99,
+  "stage_multiplier_mae": 0.3366,
+  "weights_saved_to": "/app/flood_prediction_model.pth"
+}

@@ -124,6 +124,7 @@ class SpatialHazardGenerator:
         query = f"""[out:json][timeout:5];
 (
   way["waterway"~"river|stream|canal|drain"]({min_lat},{min_lon},{max_lat},{max_lon});
+  way["natural"="water"]({min_lat},{min_lon},{max_lat},{max_lon});
   way["highway"~"motorway|trunk|primary|secondary|tertiary"]({min_lat},{min_lon},{max_lat},{max_lon});
   node["amenity"~"hospital|clinic|school|college|community_centre|shelter|police|fire_station|place_of_worship"]({min_lat},{min_lon},{max_lat},{max_lon});
   node["power"="substation"]({min_lat},{min_lon},{max_lat},{max_lon});
@@ -237,10 +238,11 @@ out body geom 120;
                     })
 
         else:
-            # If no river line is tagged in OSM and probability indicates flood threat (>0.60), identify local low-lying runoff convergence
-            if prob > 0.60:
+            # If no river line is tagged in OSM, generate the catchment runoff
+            # convergence corridor based on target coordinates and predicted probability
+            if prob > 0.15:
                 deg_m = 1.0 / 111320.0
-                r_m = 250.0 if prob > 0.75 else 120.0
+                r_m = min(600.0, max(120.0, 220.0 * stage_mult * max(0.5, prob)))
                 center_pt = Point(lon, lat)
                 poly_local = center_pt.buffer(r_m * deg_m)
                 area_km2 = self._geom_area_km2(poly_local)
@@ -249,18 +251,18 @@ out body geom 120;
                     "type": "Feature",
                     "geometry": mapping(poly_local),
                     "properties": {
-                        "zone_type": "Localized Depression Runoff Zone",
+                        "zone_type": "Primary Drainage Runoff Corridor" if prob > 0.4 else "Hydrological Basin Baseline",
                         "severity": risk_level,
-                        "fill_color": "#ef4444" if prob > 0.75 else "#f97316",
-                        "stroke_color": "#b91c1c" if prob > 0.75 else "#ea580c",
-                        "fill_opacity": 0.45,
+                        "fill_color": "#ef4444" if prob > 0.65 else ("#f97316" if prob > 0.35 else "#38bdf8"),
+                        "stroke_color": "#b91c1c" if prob > 0.65 else ("#ea580c" if prob > 0.35 else "#0284c7"),
+                        "fill_opacity": 0.45 if prob > 0.4 else 0.25,
                         "area_km2": round(area_km2, 2),
                         "flood_probability_pct": round(prob * 100, 1),
-                        "description": "High-risk topographic convergence runoff zone"
+                        "description": "Catchment surface runoff convergence corridor"
                     }
                 })
             else:
-                # Authentic zero flood condition: no waterways and normal/dry baseline
+                # Authentic zero flood condition: dry baseline
                 total_flood_area_km2 = 0.0
 
         summary = {
@@ -617,8 +619,15 @@ out body geom 120;
         lead_time = prediction.get("lead_time_hours", 12)
         area_km2 = zone_summary.get("total_flooded_area_km2", 0.0)
 
-        # Population exposure calculation based on genuine OSM density
-        pop_density = factors.get("population_density", {}).get("value") or 120
+        # Population exposure calculation based on genuine WorldPop / OSM density
+        raw_pop_density = factors.get("population_density", {}).get("value") or factors.get("population_density", {}).get("density_km2") or 120
+        try:
+            if isinstance(raw_pop_density, str):
+                pop_density = float(raw_pop_density.split()[0].replace(',', ''))
+            else:
+                pop_density = float(raw_pop_density)
+        except Exception:
+            pop_density = 120.0
         exposed_population = int(area_km2 * pop_density * (0.65 if prob > 0.5 else 0.2))
 
         # Directives

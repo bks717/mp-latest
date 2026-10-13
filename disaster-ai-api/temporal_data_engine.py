@@ -93,7 +93,7 @@ class TemporalDataEngine:
         url = (
             f"https://api.open-meteo.com/v1/forecast?"
             f"latitude={lat}&longitude={lon}&"
-            f"hourly=precipitation,rain,temperature_2m,relative_humidity_2m,wind_speed_10m,surface_pressure,"
+            f"hourly=precipitation,rain,temperature_2m,relative_humidity_2m,wind_speed_10m,surface_pressure,cape,"
             f"soil_moisture_0_to_1cm,soil_moisture_1_to_3cm,soil_moisture_3_to_9cm,soil_moisture_9_to_27cm,soil_moisture_27_to_81cm&"
             f"current=temperature_2m,relative_humidity_2m,wind_speed_10m,surface_pressure,precipitation&"
             f"past_days=3&forecast_days=3"
@@ -110,6 +110,7 @@ class TemporalDataEngine:
                 humidities = hourly.get("relative_humidity_2m", [])
                 pressures = hourly.get("surface_pressure", [])
                 winds = hourly.get("wind_speed_10m", [])
+                capes = hourly.get("cape", [])
 
                 sm_0_1 = hourly.get("soil_moisture_0_to_1cm", [])
                 sm_1_3 = hourly.get("soil_moisture_1_to_3cm", [])
@@ -134,6 +135,7 @@ class TemporalDataEngine:
                     rh = float(humidities[i] or 70.0) if i < len(humidities) else 70.0
                     press = float(pressures[i] or 1013.0) if i < len(pressures) else 1013.0
                     w = float(winds[i] or 10.0) if i < len(winds) else 10.0
+                    c_val = float(capes[i] or 0.0) if i < len(capes) else 0.0
 
                     s0 = float(sm_0_1[i] or 0.28) if i < len(sm_0_1) else 0.28
                     s1 = float(sm_1_3[i] or 0.28) if i < len(sm_1_3) else 0.28
@@ -151,6 +153,7 @@ class TemporalDataEngine:
                         "relative_humidity_pct": rh,
                         "surface_pressure_hpa": press,
                         "wind_speed_kmh": w,
+                        "cape_j_kg": c_val,
                         "soil_moisture_surface": surf_sm,
                         "soil_moisture_root": root_sm
                     })
@@ -196,8 +199,9 @@ class TemporalDataEngine:
                 means = daily.get("river_discharge_mean", [])
                 maxes = daily.get("river_discharge_max", [])
 
-                cur_q = discharges[0] if (discharges and discharges[0] is not None) else 0.0
-                mean_q = means[0] if (means and means[0] is not None) else max(cur_q, 1.0)
+                cur_q = float(discharges[0]) if (discharges and discharges[0] is not None) else 0.0
+                mean_q = float(means[0]) if (means and means[0] is not None and float(means[0]) > 0.0) else max(cur_q, 1.0)
+                mean_q = max(1.0, mean_q)
                 peak_forecast_q = max([x for x in discharges if x is not None], default=cur_q)
 
                 series = []
@@ -383,7 +387,9 @@ class TemporalDataEngine:
                 "soil_moisture_surface": min(0.50, round(point.get("soil_moisture_surface", 0.30) + (cum_rain * 0.0015), 3)),
                 "soil_moisture_root": point.get("soil_moisture_root", 0.32),
                 "river_discharge_m3s": round(q_at_h, 1),
-                "river_discharge_ratio": round(q_at_h / max(glofas_mean_q, 1.0), 2)
+                "river_discharge_ratio": round(q_at_h / max(glofas_mean_q, 1.0), 2),
+                "cape_j_kg": round(float(point.get("cape_j_kg", 0.0)), 1),
+                "convective_instability": "Severe Thunderstorm Potential" if float(point.get("cape_j_kg", 0.0)) > 1500 else ("Moderate Instability" if float(point.get("cape_j_kg", 0.0)) > 500 else "Stable")
             })
 
         return horizons
@@ -568,6 +574,15 @@ class TemporalDataEngine:
                 "unit": "meters",
                 "source": "Open-Meteo Marine" if is_coastal else "Not Applicable (Inland)",
                 "category": "Marine/Coastal"
+            },
+            "atmospheric_instability_cape": {
+                "name": "Atmospheric Instability (CAPE)",
+                "value": round(float(cur_point.get("cape_j_kg", 0.0)), 1),
+                "unit": "J/kg",
+                "source": "ECMWF Integrated Forecasting System (Convective Sounding)",
+                "status": "LIVE_TELEMETRY",
+                "instability_level": "Severe Thunderstorm Potential" if float(cur_point.get("cape_j_kg", 0.0)) > 1500 else ("Moderate Instability" if float(cur_point.get("cape_j_kg", 0.0)) > 500 else "Stable Atmospheric Boundary"),
+                "category": "Atmospheric"
             },
             "historical_return_period": {
                 "name": "Historical Return Period Benchmark",

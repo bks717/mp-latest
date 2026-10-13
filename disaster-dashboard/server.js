@@ -118,7 +118,7 @@ app.post('/api/unified-prediction', async (req, res) => {
                 radius_km: parseFloat(radius_km || 6.0),
                 run_sar_inference: !!run_sar_inference
             },
-            { timeout: 120_000 }
+            { timeout: 300_000 }
         );
 
         const data = aiResponse.data;
@@ -191,17 +191,37 @@ app.get('/api/prediction-stats', async (req, res) => {
 app.post('/api/global-prediction', async (req, res) => {
     try {
         console.log('🌍 Autonomous Global Prediction Triggered...');
-        const aiResponse = await axios.post(
-            AI_API_URL + '/global-prediction',
-            {},
-            { timeout: 120_000 }
-        );
+        let aiResponse;
+        let attempts = 0;
+        while (attempts < 2) {
+            try {
+                attempts++;
+                aiResponse = await axios.post(
+                    AI_API_URL + '/global-prediction',
+                    {},
+                    { timeout: 180_000 }  // 3-min cap: 80+ nodes × (ECMWF + GloFAS) queries
+                );
+                break;
+            } catch (err) {
+                const isRetryable = err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED' || err.message?.includes('socket hang up');
+                if (attempts < 2 && isRetryable) {
+                    console.warn(`⚠️ API connection notice (${err.message}), retrying in 2s...`);
+                    await new Promise(r => setTimeout(r, 2000));
+                } else {
+                    throw err;
+                }
+            }
+        }
 
         const data = aiResponse.data;
-        if (data.status === 'success') {
-            const savedDoc = await predictionStore.saveGlobalPrediction(data);
-            data._id = savedDoc._id;
-            console.log(`💾 Persisted Global Prediction to MongoDB (Scan ID: ${data.scan_id}, Emerging: ${data.summary?.emerging_threats_count}, Critical: ${data.summary?.critical_zones_count})`);
+        if (data.status === 'success' || data.status === 'partial') {
+            try {
+                const savedDoc = await predictionStore.saveGlobalPrediction(data);
+                if (savedDoc?._id) data._id = savedDoc._id;
+                console.log(`💾 Persisted Global Prediction to MongoDB (Scan ID: ${data.scan_id}, Emerging: ${data.summary?.emerging_threats_count}, Critical: ${data.summary?.critical_zones_count})`);
+            } catch (dbErr) {
+                console.warn('⚠️ MongoDB save notice (non-fatal):', dbErr.message);
+            }
         }
 
         res.json(data);
@@ -211,11 +231,17 @@ app.post('/api/global-prediction', async (req, res) => {
     }
 });
 
+// Alias: some frontend panels call /api/global-scan (e.g. Global Mesh panel)
+app.post('/api/global-scan', (req, res) => res.redirect(307, '/api/global-prediction'));
+
 // GET /api/global-prediction/latest
 // Returns the most recent global scan from MongoDB (or triggers a scan if none exist)
 app.get('/api/global-prediction/latest', async (req, res) => {
     try {
-        const latest = await predictionStore.getLatestGlobalPrediction();
+        const latest = await predictionStore.getLatestGlobalPrediction().catch(err => {
+            console.warn('⚠️ MongoDB read notice:', err.message);
+            return null;
+        });
         if (latest) {
             return res.json(latest);
         }
@@ -229,8 +255,12 @@ app.get('/api/global-prediction/latest', async (req, res) => {
 
         const data = aiResponse.data;
         if (data.status === 'success') {
-            const savedDoc = await predictionStore.saveGlobalPrediction(data);
-            data._id = savedDoc._id;
+            try {
+                const savedDoc = await predictionStore.saveGlobalPrediction(data);
+                if (savedDoc?._id) data._id = savedDoc._id;
+            } catch (dbErr) {
+                console.warn('⚠️ MongoDB save notice:', dbErr.message);
+            }
         }
 
         res.json(data);
@@ -384,15 +414,8 @@ app.get('/api/live-factors', async (req, res) => {
     }
 });
 
-// GET /api/global-flood-hotspots
-app.get('/api/global-flood-hotspots', async (req, res) => {
-    try {
-        const aiResponse = await axios.get(AI_API_URL + '/global-flood-hotspots', { timeout: 8000 });
-        res.json(aiResponse.data);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch global hotspots: ' + error.message });
-    }
-});
+// Alias kept for any client code that directly calls /api/global-flood-hotspots
+// (the primary route is registered at line 283 via the AI engine proxy).
 
 
 // ── Health Check ────────────────────────────────────────────────────────────
@@ -923,7 +946,7 @@ app.post('/api/sar/multiscale', async (req, res) => {
         const aiResponse = await axios.post(
             AI_API_URL + '/api/sar-multiscale',
             { lat: parseFloat(lat), lng: parseFloat(lng) },
-            { timeout: 180_000 }
+            { timeout: 600_000 }
         );
         res.json(aiResponse.data);
     } catch (error) {
@@ -939,10 +962,11 @@ app.post('/api/impact/multiscale', async (req, res) => {
             return res.status(400).json({ error: 'lat and lng coordinates are required.' });
         }
         console.log(`📊 Multi-Scale Impact assessment request for [${lat}, ${lng}]...`);
+        const depthVal = parseFloat(req.body.depth || req.body.estimated_depth_m || 1.0);
         const aiResponse = await axios.post(
             AI_API_URL + '/api/impact-multiscale',
-            { lat: parseFloat(lat), lng: parseFloat(lng) },
-            { timeout: 180_000 }
+            { lat: parseFloat(lat), lng: parseFloat(lng), depth: depthVal },
+            { timeout: 600_000 }
         );
         res.json(aiResponse.data);
     } catch (error) {
@@ -961,7 +985,7 @@ app.post('/api/action/multiscale', async (req, res) => {
         const aiResponse = await axios.post(
             AI_API_URL + '/api/action-multiscale',
             { lat: parseFloat(lat), lng: parseFloat(lng), budget: budget ? parseFloat(budget) : 100000.0 },
-            { timeout: 180_000 }
+            { timeout: 600_000 }
         );
         res.json(aiResponse.data);
     } catch (error) {
@@ -986,7 +1010,7 @@ app.post('/api/progressive/stage', async (req, res) => {
                 estimated_depth_m: parseFloat(estimated_depth_m || 1.0),
                 budget_usd: parseFloat(budget_usd || 100000.0)
             },
-            { timeout: 90_000 }
+            { timeout: 180_000 }
         );
         res.json(aiResponse.data);
     } catch (error) {

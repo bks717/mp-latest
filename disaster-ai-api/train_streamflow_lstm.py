@@ -210,25 +210,46 @@ class HydrometricBenchmarkDataset(Dataset):
             ], axis=-1).astype(np.float32)
 
             # Compute Ground-Truth Observed Streamflow Target Q_obs (m3/s normalized to mm/day)
-            # Physical Rainfall-Runoff coupling:
-            # Q(t) = Baseflow + C * (P(t) + SnowMelt) * Area, where C = f(Soil_M, Slope)
-            baseflow = (area_km2 ** 0.6) * reg["soil_sat"] * 0.05
-            c_runoff = np.clip((soil_m[-1] ** 1.8) + (slope * 0.25), 0.1, 0.92)
+            # Physical Rainfall-Runoff coupling with Boussinesq Non-Linear Storage & Rating Curve Noise:
+            # Q_base(t) = a * S(t)^2 (Boussinesq unconfined aquifer recession)
+            # Surface Runoff R(t) = P(t) * (S/S_max)^beta * (1 + slope)^0.5
+            s_max = 250.0 # mm storage capacity
+            s_current = s_max * reg["soil_sat"] * np.clip(soil_m[-1], 0.2, 0.95)
             
             q_targets = []
             routing_carryover = 0.0
             for d in range(3):
-                gen_runoff = (fut_precip[d] * c_runoff) * (area_km2 / 86.4) # m3/s
+                p_in = fut_precip[d]
                 if reg["snow"]:
-                    gen_runoff += (np.maximum(0, fut_temp[d]) * 4.0) * (area_km2 / 86.4)
-                
-                # Flow routing attenuation over basin
-                daily_q = baseflow + routing_carryover * 0.45 + gen_runoff * 0.55
-                routing_carryover = gen_runoff
-                q_targets.append(daily_q)
+                    p_in += np.maximum(0, fut_temp[d]) * 3.5
+
+                # Infiltration excess & saturation excess partition
+                sat_ratio = np.clip(s_current / s_max, 0.05, 0.98)
+                direct_runoff_mm = p_in * (sat_ratio ** 1.6) * (1.0 + slope * 0.4)
+                infiltrated_mm = max(0.0, p_in - direct_runoff_mm)
+
+                # Update storage
+                s_current = np.clip(s_current + infiltrated_mm - (fut_et0[d] * 10.0 * 0.7), 10.0, s_max)
+
+                # Boussinesq non-linear baseflow (m3/s)
+                baseflow_m3s = 0.00015 * (s_current ** 2) * (area_km2 / 86.4)
+
+                # Direct runoff generation (m3/s)
+                gen_runoff_m3s = direct_runoff_mm * (area_km2 / 86.4)
+
+                # Hydrograph attenuation & channel lag routing
+                channel_delay = 0.35 + 0.25 * (1.0 - slope)
+                daily_q_true = baseflow_m3s + routing_carryover * channel_delay + gen_runoff_m3s * (1.0 - channel_delay)
+                routing_carryover = gen_runoff_m3s
+
+                # Heteroskedastic Gauge Rating-Curve Observation Dispersion
+                # Gauges experience 8-12% ultrasonic/transducer observation dispersion
+                gauge_error_mult = np.random.normal(1.0, 0.09)
+                daily_q_obs = max(0.1, daily_q_true * gauge_error_mult)
+                q_targets.append(daily_q_obs)
 
             # Standardize Q target by basin mean using log1p
-            mean_q = baseflow + (reg["p_mean"] * c_runoff * area_km2 / 86.4)
+            mean_q = (0.00015 * ((s_max * reg["soil_sat"]) ** 2) + reg["p_mean"] * (reg["soil_sat"] ** 1.6)) * (area_km2 / 86.4)
             y_target = np.log1p(np.clip(np.array(q_targets, dtype=np.float32) / max(1.0, mean_q), 0.0, 50.0)).astype(np.float32)
 
             self.samples.append((x_past, static_vec, x_future, y_target))

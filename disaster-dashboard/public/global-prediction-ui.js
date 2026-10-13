@@ -197,7 +197,7 @@ function renderGlobalMapMarkers(data) {
         const lat = coords[1];
         const lon = coords[0];
         const peakScore = p.peak_risk_score || 0;
-        const currentScore = p.current_risk_score || 0;
+        const currentScore = (p.flood_risk_score != null) ? p.flood_risk_score : (p.current_risk_score || 0);
         const isEmerging = p.is_emerging || false;
         const sev = p.severity || 'LOW';
 

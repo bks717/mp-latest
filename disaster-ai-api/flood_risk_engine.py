@@ -47,6 +47,10 @@ class FloodRiskEngine:
         terrain = temporal_data.get("terrain", {})
         infra = temporal_data.get("infrastructure", {})
 
+        # If horizons are empty (API timeout), synthesize a fallback from current_snapshot
+        if not horizons:
+            horizons = self._synthesize_fallback_horizons(factors_snapshot, terrain)
+
         # Compute risk at each horizon
         timeline_results = []
         for h in horizons:
@@ -68,7 +72,7 @@ class FloodRiskEngine:
                 }
             })
 
-        # Current (T+0) score breakdown
+        # Current (T+0) score breakdown — guaranteed non-empty now
         current_eval = timeline_results[0] if timeline_results else {"risk_score": 15.0, "severity": "LOW"}
         current_score = current_eval["risk_score"]
 
@@ -362,6 +366,51 @@ class FloodRiskEngine:
             "resource_allocation": resources,
             "recommended_shelters": shelters[:3] if shelters else []
         }
+
+    def _synthesize_fallback_horizons(self, snapshot: Dict[str, Any], terrain: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        When forecast_horizons list is empty (due to ECMWF API timeout or data fetch failure),
+        synthesize a minimal set of horizons from whatever current_snapshot data is available.
+        This ensures risk_score is never silently zero when conditions data exists.
+        """
+        # Extract available data from snapshot factors
+        rain_24h = float(snapshot.get("rainfall_24h", {}).get("value", 0.0) or 0.0)
+        rain_72h = float(snapshot.get("rainfall_72h", {}).get("value", 0.0) or 0.0)
+        fwd_rain = float(snapshot.get("rainfall_forecast_24h", {}).get("value", 0.0) or 0.0)
+        intensity = float(snapshot.get("rainfall_intensity", {}).get("value", 0.0) or 0.0)
+        cur_q = float(snapshot.get("river_discharge", {}).get("value", 100.0) or 100.0)
+        mean_q = float(snapshot.get("historical_mean_discharge", {}).get("value", 80.0) or 80.0)
+        q_ratio = cur_q / max(mean_q, 1.0)
+        soil_m = float(snapshot.get("soil_moisture_surface", {}).get("value", 0.30) or 0.30)
+        elev = float(terrain.get("elevation_m") or snapshot.get("elevation", {}).get("value", 80.0) or 80.0)
+
+        logger.warning(f"⚠️ Forecast horizons empty — synthesizing fallback from snapshot "
+                       f"(rain24h={rain_24h}mm, Q={cur_q}m³/s, ratio={q_ratio:.2f}, SM={soil_m})")
+
+        horizons = []
+        for h_hours in [0, 6, 12, 24, 48, 72]:
+            # Project cumulative rain forward using linear extrapolation from known data
+            cum_rain = fwd_rain * (h_hours / 24.0) if h_hours > 0 else rain_24h
+            # Project discharge with simple persistence + rainfall contribution
+            projected_q = cur_q + (cum_rain * 3.5 if h_hours >= 12 else 0.0)
+
+            horizons.append({
+                "horizon_hours": h_hours,
+                "label": f"T+{h_hours}h" if h_hours > 0 else "Current (T+0)",
+                "timestamp": None,
+                "hourly_precip_mm": intensity if h_hours == 0 else (fwd_rain / 24.0),
+                "cumulative_forecast_rain_mm": round(cum_rain, 1),
+                "temperature_c": float(snapshot.get("temperature", {}).get("value", 25.0) or 25.0),
+                "relative_humidity_pct": float(snapshot.get("humidity", {}).get("value", 75.0) or 75.0),
+                "surface_pressure_hpa": float(snapshot.get("atmospheric_pressure", {}).get("value", 1013.0) or 1013.0),
+                "soil_moisture_surface": min(0.50, round(soil_m + (cum_rain * 0.0015), 3)),
+                "soil_moisture_root": float(snapshot.get("soil_moisture_root", {}).get("value", 0.32) or 0.32),
+                "river_discharge_m3s": round(projected_q, 1),
+                "river_discharge_ratio": round(projected_q / max(mean_q, 1.0), 2)
+            })
+
+        return horizons
+
 
 # Singleton provider
 _risk_engine = None

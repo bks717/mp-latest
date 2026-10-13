@@ -285,6 +285,7 @@ class GlobalPredictionEngine:
                     "basin": r["basin"],
                     # Metrics strictly separated
                     "flood_risk_score": r["flood_risk_score"],
+                    "current_risk_score": r["flood_risk_score"],
                     "peak_risk_score": r["peak_risk_score"],
                     "discharge_exceedance_p_q2": r["discharge_exceedance_p_q2"],
                     "discharge_exceedance_p_q5": r["discharge_exceedance_p_q5"],
@@ -374,7 +375,7 @@ class GlobalPredictionEngine:
         snow_depth = weather.get("snow_depth_cm", 0.0)
         temp_c = weather.get("temp_2m", 20.0)
         et0 = weather.get("et0_mm", 2.5)
-        cape = weather.get("cape_proxy", 250.0)
+        cape = weather.get("cape", weather.get("cape_proxy", 0.0))
 
         cur_q = glofas.get("current_discharge", 180.0)
         q_ratio = glofas.get("anomaly_ratio", 1.0)
@@ -598,6 +599,7 @@ class GlobalPredictionEngine:
             "slope": slope,
             # Strictly separated metrics
             "flood_risk_score": round(current_score, 1),
+            "current_risk_score": round(current_score, 1),
             "peak_risk_score": round(peak_score, 1),
             "discharge_exceedance_p_q2": p_q2,
             "discharge_exceedance_p_q5": p_q5,
@@ -646,7 +648,7 @@ class GlobalPredictionEngine:
                 f"https://api.open-meteo.com/v1/forecast?"
                 f"latitude={lats}&longitude={lons}&"
                 f"current=temperature_2m,relative_humidity_2m,wind_speed_10m,surface_pressure,precipitation&"
-                f"hourly=precipitation,temperature_2m,soil_moisture_0_to_1cm,soil_moisture_1_to_3cm,soil_moisture_3_to_9cm,soil_moisture_9_to_27cm,snow_depth,snowfall,et0_fao_evapotranspiration&"
+                f"hourly=precipitation,temperature_2m,soil_moisture_0_to_1cm,soil_moisture_1_to_3cm,soil_moisture_3_to_9cm,soil_moisture_9_to_27cm,snow_depth,snowfall,et0_fao_evapotranspiration,cape&"
                 f"past_days=14&forecast_days=3"
             )
 
@@ -665,8 +667,16 @@ class GlobalPredictionEngine:
                             et0s = hourly.get("et0_fao_evapotranspiration", [])
                             snows = hourly.get("snow_depth", [])
 
-                            # Index for current hour: past_days=14 -> ~336 hours
+                            # Index for current hour: find matching UTC timestamp
+                            from datetime import datetime as dt_type, timezone as tz_type
+                            now_utc_str = dt_type.now(tz_type.utc).strftime("%Y-%m-%dT%H:00")
+                            w_times = hourly.get("time", [])
                             cur_idx = 336 if len(precips) >= 336 else max(0, len(precips) - 72)
+                            if w_times:
+                                for t_i, t_val in enumerate(w_times):
+                                    if t_val >= now_utc_str:
+                                        cur_idx = t_i
+                                        break
                             
                             past_24_rain = sum(float(x or 0.0) for x in precips[max(0, cur_idx - 24):cur_idx])
                             fwd_24_rain = sum(float(x or 0.0) for x in precips[cur_idx:min(len(precips), cur_idx + 24)])
@@ -700,6 +710,10 @@ class GlobalPredictionEngine:
                             cur_snow = float(snows[cur_idx] or 0.0) * 100.0 if cur_idx < len(snows) else 0.0 # m to cm
                             cur_et0 = float(et0s[cur_idx] or 2.5) if cur_idx < len(et0s) else 2.5
 
+                            # Real CAPE from Open-Meteo (Convective Available Potential Energy)
+                            cape_values = hourly.get("cape", [])
+                            cur_cape = float(cape_values[cur_idx] or 0.0) if cur_idx < len(cape_values) else 0.0
+
                             weather_map[node_id] = {
                                 "past_24_rain": round(past_24_rain, 1),
                                 "fwd_24_rain": round(fwd_24_rain, 1),
@@ -710,8 +724,11 @@ class GlobalPredictionEngine:
                                 "temp_2m": round(cur_temp, 1),
                                 "snow_depth_cm": round(cur_snow, 1),
                                 "et0_mm": round(cur_et0, 2),
-                                "cape_proxy": 850.0 if (fwd_24_rain > 35.0 and cur_temp > 24.0) else 200.0,
-                                "rain_anomaly_ratio": round(max(0.2, (fwd_72_rain / 25.0)), 2)
+                                "cape": round(cur_cape, 1),
+                                "cape_proxy": round(cur_cape, 1),
+                                "rain_anomaly_ratio": round(max(0.2, (fwd_72_rain / 25.0)), 2),
+                                # ISO timestamp of the ECMWF IFS data issue (current UTC hour)
+                                "issue_time_utc": now_utc_str + ":00Z"
                             }
             except Exception as e:
                 logger.warning(f"⚠️ Weather batch query failed for chunk: {e}")
@@ -731,7 +748,7 @@ class GlobalPredictionEngine:
             url = (
                 f"https://flood-api.open-meteo.com/v1/flood?"
                 f"latitude={lats}&longitude={lons}&"
-                f"daily=river_discharge,river_discharge_median,river_discharge_max&"
+                f"daily=river_discharge,river_discharge_mean,river_discharge_median,river_discharge_max&"
                 f"forecast_days=7&past_days=14"
             )
 
@@ -745,21 +762,33 @@ class GlobalPredictionEngine:
                         if idx < len(chunk):
                             node_id = chunk[idx]["id"]
                             daily = item.get("daily", {})
+                            times = daily.get("time", [])
                             discharges = daily.get("river_discharge", [])
+                            means = daily.get("river_discharge_mean", [])
                             medians = daily.get("river_discharge_median", [])
                             maxes = daily.get("river_discharge_max", [])
 
-                            # past_days=14 -> day index 14 is current day
-                            cur_idx = 14 if len(discharges) >= 15 else 0
-                            cur_q = float(discharges[cur_idx] or 150.0) if cur_idx < len(discharges) else 150.0
+                            # Date-based lookup: find today's index in UTC
+                            from datetime import datetime as dt_type, timezone as tz_type
+                            today_str = dt_type.now(tz_type.utc).date().isoformat()
+                            cur_idx = 0
+                            if times:
+                                for t_i, t_val in enumerate(times):
+                                    if t_val >= today_str:
+                                        cur_idx = t_i
+                                        break
+                                else:
+                                    cur_idx = len(times) - 1
 
-                            # 10-year historical mean proxy from past 14 days baseline
-                            past_flow = [float(x or 150.0) for x in discharges[:cur_idx]] if cur_idx > 0 else [cur_q]
-                            hist_mean = sum(past_flow) / max(1, len(past_flow))
+                            cur_q = float(discharges[cur_idx]) if (cur_idx < len(discharges) and discharges[cur_idx] is not None) else 150.0
 
-                            ratio = cur_q / max(1.0, hist_mean)
-                            fwd_median = float(medians[min(len(medians) - 1, cur_idx + 2)] or cur_q) if medians else cur_q
-                            fwd_max = float(maxes[min(len(maxes) - 1, cur_idx + 2)] or cur_q * 1.2) if maxes else cur_q * 1.2
+                            # Use GloFAS `river_discharge_mean` as the climatological baseline
+                            hist_mean = float(means[cur_idx]) if (means and cur_idx < len(means) and means[cur_idx] is not None and float(means[cur_idx]) > 0.0) else max(cur_q, 1.0)
+                            hist_mean = max(1.0, hist_mean)
+
+                            ratio = cur_q / hist_mean
+                            fwd_median = float(medians[min(len(medians) - 1, cur_idx + 2)]) if (medians and cur_idx < len(medians) and medians[min(len(medians) - 1, cur_idx + 2)] is not None) else cur_q
+                            fwd_max = float(maxes[min(len(maxes) - 1, cur_idx + 2)]) if (maxes and cur_idx < len(maxes) and maxes[min(len(maxes) - 1, cur_idx + 2)] is not None) else cur_q * 1.2
 
                             glofas_map[node_id] = {
                                 "current_discharge": round(cur_q, 1),

@@ -269,6 +269,12 @@ function renderUnifiedResults(data) {
     // 5. Satellite Deep Learning Evidence (SAR U-Net)
     renderSatelliteEvidence(sar);
 
+    // 5b. Authentic Hydrological Telemetry (USGS / CWC, NASA GPM, SoilGrids)
+    renderLiveTelemetryCard(data.factors || {});
+
+    // 5c. Deep Learning Models & Uncertainty (TCN-Attention + Deep Ensembles)
+    renderDeepLearningCredentialsCard(data);
+
     // 6. Summary Stats Grid
     const areaEl = document.getElementById('res-stat-area');
     const roadsEl = document.getElementById('res-stat-roads');
@@ -490,6 +496,86 @@ function renderSatelliteEvidence(sar) {
                 Trained EfficientNet-B3 U-Net armed for Sentinel-1 radar segmentation.
                 Check 'Include Satellite SAR Deep Learning Verification' to execute SAR tile inference.
             `;
+        }
+    }
+}
+
+/**
+ * Renders authentic hydrological telemetry card (USGS / CWC, NASA GPM, SoilGrids)
+ */
+function renderLiveTelemetryCard(factors) {
+    if (!factors) return;
+    const gauge = factors.national_river_gauge;
+    const nasa = factors.nasa_satellite_precipitation;
+    const soil = factors.soil_type;
+
+    const card = document.getElementById('live-telemetry-card');
+    const stationEl = document.getElementById('telemetry-gauge-station');
+    const flowEl = document.getElementById('telemetry-gauge-flow');
+    const stageEl = document.getElementById('telemetry-gauge-stage');
+    const badgeElGauge = document.getElementById('telemetry-source-badge');
+    const nasaEl = document.getElementById('telemetry-nasa-gpm');
+    const soilEl = document.getElementById('telemetry-soilgrids');
+
+    if (gauge) {
+        if (stationEl) stationEl.textContent = gauge.station_name || gauge.station_id || 'USGS / CWC Gauging Network';
+        if (flowEl) flowEl.textContent = gauge.discharge_m3s != null ? `${gauge.discharge_m3s} m³/s` : (gauge.value ? String(gauge.value).split('—')[1]?.trim() || String(gauge.value) : '-- m³/s');
+        if (stageEl) stageEl.textContent = gauge.stage_height_m != null ? `${gauge.stage_height_m} m` : 'Nominal';
+        if (badgeElGauge) {
+            const isUsgs = gauge.source?.includes('USGS');
+            const isCwc = gauge.source?.includes('CWC');
+            badgeElGauge.textContent = isUsgs ? 'USGS NWIS' : (isCwc ? 'CWC WRIS' : 'LIVE GAUGE');
+            const isDanger = gauge.status === 'DANGER_LEVEL_EXCEEDED' || (gauge.alert_level && gauge.alert_level.includes('DANGER'));
+            badgeElGauge.style.background = isDanger ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.15)';
+            badgeElGauge.style.color = isDanger ? '#f87171' : '#34d399';
+        }
+    }
+    if (nasa && nasaEl) {
+        nasaEl.textContent = nasa.accumulated_5d_mm != null ? `${nasa.accumulated_5d_mm} mm (NASA IMERG 5d)` : (nasa.value || '--');
+    }
+    if (soil && soilEl) {
+        soilEl.textContent = soil.value || (soil.clay_pct != null ? `ISRIC Soil (Clay ${soil.clay_pct}%)` : '--');
+    }
+}
+
+/**
+ * Renders Deep Learning model credentials, TCN-Attention multi-horizon forecasts, and Deep Ensemble epistemic uncertainty
+ */
+function renderDeepLearningCredentialsCard(data) {
+    if (!data) return;
+    const tcn = data.tcn_attention_forecast;
+    const ens = data.deep_ensemble_uncertainty;
+
+    const tcnPeakEl = document.getElementById('dl-tcn-peak');
+    const tcnHorizonsEl = document.getElementById('dl-tcn-horizons');
+    const sigmaEl = document.getElementById('dl-uncertainty-sigma');
+    const ciEl = document.getElementById('dl-confidence-interval');
+
+    if (tcn) {
+        if (tcnPeakEl) {
+            tcnPeakEl.textContent = `${tcn.peak_risk_score}/100 at T+${tcn.peak_time_hours}h (${tcn.peak_severity})`;
+            const col = tcn.peak_risk_score >= 70 ? '#f87171' : (tcn.peak_risk_score >= 40 ? '#fb923c' : '#38bdf8');
+            tcnPeakEl.style.color = col;
+        }
+        if (tcnHorizonsEl && Array.isArray(tcn.horizon_predictions)) {
+            tcnHorizonsEl.innerHTML = tcn.horizon_predictions
+                .filter(h => h.horizon_hours > 0)
+                .map(h => `<span>${h.label}: <b style="color:${h.predicted_risk_score >= 50 ? '#fb923c' : '#cbd5e1'}">${h.predicted_risk_score}%</b></span>`)
+                .join(' · ');
+        }
+    }
+
+    if (ens) {
+        if (sigmaEl) {
+            const sig = ens.epistemic_uncertainty_sigma != null ? (ens.epistemic_uncertainty_sigma * 100).toFixed(1) : '0.0';
+            sigmaEl.textContent = `±${sig}%`;
+            sigmaEl.style.color = Number(sig) > 10.0 ? '#fb923c' : '#a78bfa';
+        }
+        if (ciEl) {
+            const ci = ens.confidence_interval_95_pct;
+            if (ci) {
+                ciEl.textContent = `${ci.risk_lower}% — ${ci.risk_upper}%`;
+            }
         }
     }
 }
