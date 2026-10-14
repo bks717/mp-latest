@@ -8,7 +8,6 @@
 let predictHazardLayer = null;
 let predictRoadsLayer = null;
 let predictSheltersLayer = null;
-let predictRoutesLayer = null;
 let predictInfraLayer = null;
 let predictSarLayer = null;
 
@@ -64,7 +63,6 @@ function initPredictLayers() {
     if (!predictHazardLayer) predictHazardLayer = L.featureGroup().addTo(map);
     if (!predictRoadsLayer) predictRoadsLayer = L.featureGroup().addTo(map);
     if (!predictSheltersLayer) predictSheltersLayer = L.featureGroup().addTo(map);
-    if (!predictRoutesLayer) predictRoutesLayer = L.featureGroup().addTo(map);
     if (!predictInfraLayer) predictInfraLayer = L.featureGroup().addTo(map);
     if (!predictSarLayer) predictSarLayer = L.featureGroup().addTo(map);
 }
@@ -73,7 +71,6 @@ function clearPredictLayers() {
     if (predictHazardLayer) predictHazardLayer.clearLayers();
     if (predictRoadsLayer) predictRoadsLayer.clearLayers();
     if (predictSheltersLayer) predictSheltersLayer.clearLayers();
-    if (predictRoutesLayer) predictRoutesLayer.clearLayers();
     if (predictInfraLayer) predictInfraLayer.clearLayers();
     if (predictSarLayer) predictSarLayer.clearLayers();
 }
@@ -211,11 +208,10 @@ async function runUnifiedPrediction() {
 function renderUnifiedResults(data) {
     clearPredictLayers();
 
-    const pred = data.prediction || {};
+const pred = data.prediction || {};
     const explain = data.explainability || [];
     const horizons = data.forecast_horizons || [];
     const spatial = data.spatial_impact || {};
-    const mgmtPlan = data.management_response || {};
     const sar = data.satellite_evidence || {};
 
     const resultsPanel = document.getElementById('predict-results-panel');
@@ -289,9 +285,6 @@ function renderUnifiedResults(data) {
                        (spatial.estimated_affected_area_km2 ? Math.round(spatial.estimated_affected_area_km2 * 450) : 0);
         popEl.textContent = popVal.toLocaleString();
     }
-
-    // 7. Operational Actions & Emergency Logistics
-    renderManagementResponse(mgmtPlan);
 
     // 8. Plot on Map
     plotSpatialFeatures(data);
@@ -580,44 +573,7 @@ function renderDeepLearningCredentialsCard(data) {
     }
 }
 
-/**
- * Renders actionable emergency management plan
- */
-function renderManagementResponse(plan) {
-    const actionsList = document.getElementById('res-actions-list');
-    const resSummaryEl = document.getElementById('res-resource-summary');
 
-    if (actionsList) {
-        const actions = plan.primary_actions || [];
-        actionsList.innerHTML = actions.map(act => `
-            <li style="margin-bottom:6px; line-height:1.45; font-size:11.5px; color:#f1f5f9;">${act}</li>
-        `).join('');
-    }
-
-    if (resSummaryEl) {
-        const alloc = plan.resource_allocation || {};
-        resSummaryEl.innerHTML = `
-            <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap: 6px; font-size: 11px; margin-top: 6px;">
-                <div style="background:rgba(255,255,255,0.04); padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.08);">
-                    <div style="color:#94a3b8;">Sandbag Levees</div>
-                    <div style="font-weight:700; color:#38bdf8; font-size:12px;">${alloc.sandbags_prepositioned || '5,000 units'}</div>
-                </div>
-                <div style="background:rgba(255,255,255,0.04); padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.08);">
-                    <div style="color:#94a3b8;">Dewatering Pumps</div>
-                    <div style="font-weight:700; color:#38bdf8; font-size:12px;">${alloc.heavy_dewatering_pumps || '4 mobile units'}</div>
-                </div>
-                <div style="background:rgba(255,255,255,0.04); padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.08);">
-                    <div style="color:#94a3b8;">Rescue Boats</div>
-                    <div style="font-weight:700; color:#38bdf8; font-size:12px;">${alloc.rescue_boats || '6 zodiacs'}</div>
-                </div>
-                <div style="background:rgba(255,255,255,0.04); padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.08);">
-                    <div style="color:#94a3b8;">Emergency Rations</div>
-                    <div style="font-weight:700; color:#38bdf8; font-size:12px;">${alloc.emergency_rations || 'Buffer stock'}</div>
-                </div>
-            </div>
-        `;
-    }
-}
 
 /**
  * Plots spatial hazard zones, roads, shelters, and evacuation routes on Leaflet
@@ -670,21 +626,6 @@ function plotSpatialFeatures(data) {
                     <b style="color:#ef4444;">⚠️ IMPASSABLE ROAD CORRIDOR</b><br>
                     <b>Name:</b> ${props.road_name || 'Highway Segment'}<br>
                     <b>Submerged:</b> ${props.submerged_length_km || 0} km
-                </div>
-            `);
-        }
-
-        // C: Safe Evacuation Routes
-        else if (layerType === 'evacuation_route') {
-            const line = L.geoJSON(f, {
-                style: { color: '#10b981', weight: 3.5, dashArray: '4, 4' }
-            }).addTo(predictRoutesLayer);
-
-            line.bindPopup(`
-                <div style="font-family:'Inter',system-ui,sans-serif; min-width:180px;">
-                    <b style="color:#10b981;">🟢 SAFE EVACUATION CORRIDOR</b><br>
-                    <b>To:</b> ${props.destination || 'Designated Shelter'}<br>
-                    <b>Distance:</b> ${props.distance_km || 0} km
                 </div>
             `);
         }
@@ -901,7 +842,6 @@ async function dispatchPredictionResources() {
 
     const shelters = currentPredictionData.spatial_impact?.emergency_shelters || [];
     const targetShelter = shelters.length > 0 ? shelters[0] : { name: 'Regional Relief Center', location: [selectedLat, selectedLng] };
-    const plan = currentPredictionData.management_response || {};
 
     const btn = document.getElementById('dispatchPredictBtn');
     if (btn) btn.disabled = true;

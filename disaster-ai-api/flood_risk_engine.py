@@ -106,9 +106,6 @@ class FloodRiskEngine:
         # Compute explainability & feature contributions on peak/current state
         explainability = self._compute_feature_contributions(horizons[0] if horizons else {}, terrain, infra, peak_eval)
 
-        # Generate actionable disaster management recommendations
-        management = self._generate_management_plan(peak_score, peak_hours, trend, infra.get("shelters", []))
-
         # Check if satellite evidence is provided (from SAR U-Net)
         satellite_summary = None
         if satellite_evidence and satellite_evidence.get("active"):
@@ -135,7 +132,6 @@ class FloodRiskEngine:
             "trend_description": trend_desc,
             "risk_timeline": timeline_results,
             "explainability": explainability,
-            "management_response": management,
             "satellite_evidence": satellite_summary,
             "model_metadata": {
                 "risk_engine": "Hydrological Multi-Factor Risk Engine v2.0",
@@ -285,87 +281,6 @@ class FloodRiskEngine:
 
         drivers.sort(key=lambda x: x["contribution_pct"], reverse=True)
         return drivers
-
-    def _generate_management_plan(self, peak_score: float, peak_hours: int, trend: str, shelters: list) -> Dict[str, Any]:
-        """Generates operational disaster management decisions aligned with projected peak risk"""
-        if peak_score >= 75.0:
-            tier = "CRITICAL_FLOOD_WARNING"
-            tier_label = "Tier 4: Critical Inundation Alert — Immediate Response"
-            color = "#ef4444"
-            actions = [
-                "Issue mandatory evacuation order for low-lying riparian catchments within 2.5 km of riverbanks.",
-                "Activate local Emergency Operations Center (EOC) on 24/7 continuous command posture.",
-                "Pre-deploy National/State Disaster Response Forces (NDRF/SDRF) with motorized zodiac rescue boats.",
-                "Commence sandbag fortification along vulnerable levee breaches and municipal stormwater outfalls.",
-                "Mobilize designated school and community facilities as emergency evacuation refuges."
-            ]
-            resources = {
-                "rescue_boats": "12–16 motorized inflatables",
-                "heavy_dewatering_pumps": "8 mobile high-capacity units (250 HP)",
-                "sandbags_prepositioned": "35,000 units at critical levee points",
-                "emergency_rations": "15,000 dry ration food packets & clean potable water tankers",
-                "medical_teams": "4 rapid-response trauma & waterborne pathogen units"
-            }
-        elif peak_score >= 50.0:
-            tier = "FLOOD_WATCH"
-            tier_label = "Tier 3: Severe Flood Watch — Preparedness Mobilization"
-            color = "#f97316"
-            actions = [
-                "Issue public flood watch advisories to agrarian and settlement sectors in depression zones.",
-                "Inspect sluice gates, culverts, and municipal drainage channels for debris blockages.",
-                "Prepare designated emergency shelters for vulnerable population intake.",
-                "Stage rescue personnel and medical triage kits on standby at central depots.",
-                "Restrict vehicular transit across low-water river bridges and submergible causeways."
-            ]
-            resources = {
-                "rescue_boats": "6–8 rescue boats on standby",
-                "heavy_dewatering_pumps": "4 mobile pumps deployed at depression intersections",
-                "sandbags_prepositioned": "15,000 units stored at district depot",
-                "emergency_rations": "5,000 emergency relief packs",
-                "medical_teams": "2 mobile health clinics on standby"
-            }
-        elif peak_score >= 25.0:
-            tier = "ADVISORY"
-            tier_label = "Tier 2: Hydrological Advisory — Increased Surveillance"
-            color = "#eab308"
-            actions = [
-                "Monitor automated river gauge telemetry and satellite precipitation radars every 3 hours.",
-                "Notify municipal maintenance crews to clear storm drains and secondary canals.",
-                "Verify operational readiness of emergency communications and generator backup power.",
-                "Advise farmers and riverside livestock owners to relocate to slightly elevated terrain."
-            ]
-            resources = {
-                "rescue_boats": "2 patrol craft on routine surveillance",
-                "heavy_dewatering_pumps": "Standby inspection at base",
-                "sandbags_prepositioned": "5,000 units on standby",
-                "emergency_rations": "Standard municipal buffer inventory",
-                "medical_teams": "District hospital on standard alert"
-            }
-        else:
-            tier = "NORMAL"
-            tier_label = "Tier 1: Normal Operations — Baseline Hydrological Monitoring"
-            color = "#10b981"
-            actions = [
-                "Continue automated real-time ingestion of ECMWF and GloFAS meteorological telemetry.",
-                "Conduct routine preventative maintenance of flood embankments and drainage channels.",
-                "Maintain baseline emergency communication logs."
-            ]
-            resources = {
-                "rescue_boats": "Routine depot readiness",
-                "heavy_dewatering_pumps": "Depot inventory",
-                "sandbags_prepositioned": "Standard municipal storage",
-                "emergency_rations": "Adequate baseline",
-                "medical_teams": "Routine operational status"
-            }
-
-        return {
-            "tier": tier,
-            "tier_label": tier_label,
-            "badge_color": color,
-            "primary_actions": actions,
-            "resource_allocation": resources,
-            "recommended_shelters": shelters[:3] if shelters else []
-        }
 
     def _synthesize_fallback_horizons(self, snapshot: Dict[str, Any], terrain: Dict[str, Any]) -> List[Dict[str, Any]]:
         """

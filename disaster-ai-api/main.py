@@ -5,6 +5,7 @@ import json
 import math
 import logging
 import requests
+import pandas as pd
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 logger = logging.getLogger("DisasterAPI")
@@ -15,7 +16,9 @@ from rasterio.features import shapes
 import numpy as np
 import osmnx as ox
 import geopandas as gpd
-from shapely.geometry import shape, mapping, box
+from shapely.geometry import shape, mapping, box, Point, LineString
+from shapely.ops import unary_union, nearest_points
+import networkx as nx
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -100,6 +103,15 @@ print("✅ Flood Forecast Service Ready")
 print("🎯 Initializing Response Optimizer (Evacuation + Shelters + Resources)...")
 optimizer = get_optimizer()
 print("✅ Response Optimizer Ready")
+
+# ─────────────────────────────────────────────
+# Initialize Enhanced Flood-Aware Action Plan Engine
+# ─────────────────────────────────────────────
+print("🗺️ Initializing Flood-Aware Evacuation Routing Engine...")
+from flood_action_engine import FloodActionEngine
+flood_action_engine = FloodActionEngine()
+print("✅ Flood-Aware Action Engine Ready")
+
 # ─────────────────────────────────────────────
 # Initialize Real-World Multi-Factor Flood Prediction Services
 # ─────────────────────────────────────────────
@@ -138,16 +150,90 @@ deep_ensemble_predictor = DeepEnsembleFloodPredictor(ensemble_size=5)
 print("✅ Deep Ensemble Epistemic Uncertainty Engine Armed")
 
 # ─────────────────────────────────────────────
+# Shared Helper: Fetch JRC Global Surface Water Occurrence
+# ─────────────────────────────────────────────
+async def fetch_jrc_gsw_occurrence(bbox: List[float], target_shape: Tuple[int, int] = None) -> Optional[np.ndarray]:
+    """
+    Fetches JRC Global Surface Water Occurrence data from Microsoft Planetary Computer STAC
+    for the given bounding box. Returns occurrence data normalized to [0, 1] matching target_shape.
+    """
+    try:
+        catalog = Client.open(
+            "https://planetarycomputer.microsoft.com/api/stac/v1",
+            modifier=pc.sign_inplace,
+            timeout=15.0
+        )
+        search = catalog.search(
+            collections=["jrc-gsw"],
+            bbox=bbox,
+            limit=1
+        )
+        items = list(search.items())
+        if not items:
+            logger.info("No JRC GSW data found for this bbox")
+            return None
+        
+        item = items[0]
+        # Use the 'occurrence' asset (frequency of water presence 1984-2020, 0-100%)
+        occurrence_asset = item.assets.get("occurrence")
+        if not occurrence_asset:
+            logger.info("JRC GSW occurrence asset not available")
+            return None
+        occurrence_href = occurrence_asset.href
+        
+        # Open and clip to bbox
+        ds = rioxarray.open_rasterio(occurrence_href)
+        bbox_geom = box(*bbox)
+        bbox_gdf = gpd.GeoDataFrame(geometry=[bbox_geom], crs="EPSG:4326")
+        bbox_gdf_proj = bbox_gdf.to_crs(ds.rio.crs)
+        proj_bbox = tuple(bbox_gdf_proj.total_bounds)
+        clipped = ds.rio.clip_box(*proj_bbox)
+        
+        # Resample to target shape if provided
+        if target_shape is not None and (clipped.shape[1] != target_shape[0] or clipped.shape[2] != target_shape[1]):
+            clipped = clipped.rio.reproject(
+                clipped.rio.crs,
+                shape=target_shape,
+                resampling=rasterio.enums.Resampling.bilinear
+            )
+        
+        occurrence_data = clipped.values.squeeze()
+        # Normalize from 0-100% to 0-1
+        occurrence_norm = np.nan_to_num(occurrence_data) / 100.0
+        occurrence_norm = np.clip(occurrence_norm, 0.0, 1.0)
+        
+        logger.info(f"Fetched JRC GSW occurrence: shape={occurrence_norm.shape}, range=[{occurrence_norm.min():.3f}, {occurrence_norm.max():.3f}]")
+        return occurrence_norm
+        
+    except Exception as e:
+        logger.warning(f"Failed to fetch JRC GSW occurrence: {e}")
+        return None
+
+
+def fetch_jrc_gsw_occurrence_sync(bbox: List[float], target_shape: Tuple[int, int] = None) -> Optional[np.ndarray]:
+    """Synchronous wrapper for fetching JRC GSW occurrence."""
+    try:
+        import asyncio
+        return asyncio.run(fetch_jrc_gsw_occurrence(bbox, target_shape))
+    except Exception:
+        # If async fails, try running in a new event loop
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(fetch_jrc_gsw_occurrence(bbox, target_shape))
+        except Exception as e:
+            logger.warning(f"Failed to fetch JRC GSW occurrence (sync): {e}")
+            return None
+
+
+# ─────────────────────────────────────────────
 # Shared Helper: build the 4-channel input tensor
 # ─────────────────────────────────────────────
 # The v4 model was trained on 4 channels (see colab_model_v4.ipynb):
 #   1. VV  (normalised dB)
 #   2. VH  (normalised dB)
 #   3. ratio = VV / VH,  min-max normalised
-#   4. JRC permanent-water mask
-# At inference for an arbitrary location we don't have the JRC mask, so we
-# supply a zero channel. The downstream OSM permanent-water filter removes
-# permanent water bodies anyway, so the visible result is effectively the same.
+#   4. JRC Global Surface Water occurrence / permanent water baseline [0, 1]
 def build_model_input(vv_norm: np.ndarray, vh_norm: np.ndarray, water_prior: Optional[np.ndarray] = None) -> torch.Tensor:
     """
     Constructs the 4-channel input tensor expected by the EfficientNet-B3 U-Net:
@@ -163,9 +249,8 @@ def build_model_input(vv_norm: np.ndarray, vh_norm: np.ndarray, water_prior: Opt
     if water_prior is not None and water_prior.shape == vv_norm.shape:
         water = np.nan_to_num(np.clip(water_prior, 0.0, 1.0))
     else:
-        # Authentic JRC Global Surface Water occurrence baseline derived from
-        # physical radar specular reflectance: open surface water has characteristic
-        # low backscatter (VV < -18 dB -> norm < 0.40, VH < -25 dB -> norm < 0.28).
+        # Use specular water prior as fallback when JRC data unavailable
+        # This is derived from physical radar specular reflectance properties
         specular_vv = np.clip(1.0 - (vv_norm / 0.40), 0.0, 1.0)
         specular_vh = np.clip(1.0 - (vh_norm / 0.28), 0.0, 1.0)
         water = np.sqrt(specular_vv * specular_vh)
@@ -295,7 +380,7 @@ def filter_polygons(raw_polygons: list, source_crs: str) -> gpd.GeoDataFrame:
       1. Reproject to EPSG:4326
       2. Remove oversized false-positive blobs
       3. Remove ocean polygons (global land mask)
-      4. Subtract permanent water (OSM)
+      4. Subtract permanent water (OSM) - with intelligent large-area handling
     """
     gdf = gpd.GeoDataFrame(geometry=raw_polygons, crs=source_crs)
     if str(gdf.crs) != "EPSG:4326":
@@ -316,7 +401,7 @@ def filter_polygons(raw_polygons: list, source_crs: str) -> gpd.GeoDataFrame:
     if gdf.empty:
         print("✅ All detected water was open ocean. Area clear.")
         return gdf
-    # Step 4 — OSM permanent water filter
+    # Step 4 — OSM permanent water filter (with intelligent large-area handling)
     print("🌍 Fetching permanent water from OpenStreetMap...")
     bounds = gdf.total_bounds
     # GeoPandas total_bounds: [minx (west), miny (south), maxx (east), maxy (north)]
@@ -326,55 +411,128 @@ def filter_polygons(raw_polygons: list, source_crs: str) -> gpd.GeoDataFrame:
     east = min(179.9, max(-179.9, float(bounds[2])))
     west = min(179.9, max(-179.9, float(bounds[0])))
 
-    # Guard: skip OSM filter when polygon footprint is too large (>0.1 sq deg ≈ ~1000 km²)
-    # to prevent OSMnx from splitting into thousands of sub-queries that take forever
     bbox_area_deg2 = abs(north - south) * abs(east - west)
     lat_range = abs(north - south)
     lng_range = abs(east - west)
     print(f"   OSM bbox: N={north:.4f} S={south:.4f} E={east:.4f} W={west:.4f} → {lat_range:.4f}° × {lng_range:.4f}° = {bbox_area_deg2:.4f} deg²")
 
+    # For large areas, use a tiled approach to query OSM in chunks
     if bbox_area_deg2 > 0.1 or lat_range > 0.5 or lng_range > 0.5:
-        print(f"⚠️ OSM filter skipped: polygon footprint ({bbox_area_deg2:.2f} deg², {lat_range:.2f}° × {lng_range:.2f}°) exceeds safe query threshold. Permanent water filtering delegated to JRC water channel.")
-        return gdf
+        print(f"   Large area detected ({bbox_area_deg2:.2f} deg²). Using tiled OSM query strategy...")
+        gdf = _filter_permanent_water_tiled(gdf, west, south, east, north)
+    else:
+        # Clamp bbox to max 0.15° in each direction from center (about 15km) to prevent huge OSM queries
+        center_lat = (north + south) / 2.0
+        center_lng = (east + west) / 2.0
+        max_half_deg = 0.15  # ~15km half-width
+        north = min(north, center_lat + max_half_deg)
+        south = max(south, center_lat - max_half_deg)
+        east = min(east, center_lng + max_half_deg)
+        west = max(west, center_lng - max_half_deg)
 
-    # Clamp bbox to max 0.15° in each direction from center (about 15km) to prevent huge OSM queries
-    center_lat = (north + south) / 2.0
-    center_lng = (east + west) / 2.0
-    max_half_deg = 0.15  # ~15km half-width
-    north = min(north, center_lat + max_half_deg)
-    south = max(south, center_lat - max_half_deg)
-    east = min(east, center_lng + max_half_deg)
-    west = max(west, center_lng - max_half_deg)
-
-    tags = {"natural": ["water", "coastline"], "waterway": ["river", "stream"], "water": True}
-    try:
-        ox.settings.user_agent = "FloodWatch-AI/2.0 (Disaster-Response-System)"
-        ox.settings.overpass_settings = "[out:json][timeout:5]{maxsize}"
-        ox.settings.requests_timeout = 5
-        if hasattr(ox.settings, "timeout"):
-            ox.settings.timeout = 5
-        # Set large max_query_area_size to prevent OSMnx from splitting into thousands of sub-queries
-        ox.settings.max_query_area_size = 500_000_000  # 500 km² in m²
-        # Note: OSMnx 2.0+ takes bbox=(left, bottom, right, top) = (west, south, east, north)
-        osm_water = ox.features_from_bbox(bbox=(west, south, east, north), tags=tags)
-        if not osm_water.empty:
-            print(f"🌊 Found {len(osm_water)} permanent water bodies. Filtering...")
-            osm_water["geometry"] = osm_water.geometry.buffer(0)
-            osm_geom = osm_water.union_all()
-            diff_gdf = gdf.copy()
-            diff_gdf["geometry"] = diff_gdf.geometry.difference(osm_geom)
-            diff_gdf = diff_gdf[~diff_gdf.is_empty]
-            # If difference removes all polygons because water detected overlaps the river margins,
-            # retain the detected water so the user can inspect the inundation corridor!
-            if not diff_gdf.empty:
-                gdf = diff_gdf
-                print(f"✅ Filtering complete. Remaining flood zones: {len(gdf)}")
+        tags = {"natural": ["water", "coastline"], "waterway": ["river", "stream"], "water": True}
+        try:
+            ox.settings.user_agent = "FloodWatch-AI/2.0 (Disaster-Response-System)"
+            ox.settings.overpass_settings = "[out:json][timeout:5]{maxsize}"
+            ox.settings.requests_timeout = 5
+            if hasattr(ox.settings, "timeout"):
+                ox.settings.timeout = 5
+            # Set large max_query_area_size to prevent OSMnx from splitting into thousands of sub-queries
+            ox.settings.max_query_area_size = 500_000_000  # 500 km² in m²
+            # Note: OSMnx 2.0+ takes bbox=(left, bottom, right, top) = (west, south, east, north)
+            osm_water = ox.features_from_bbox(bbox=(west, south, east, north), tags=tags)
+            if not osm_water.empty:
+                print(f"🌊 Found {len(osm_water)} permanent water bodies. Filtering...")
+                osm_water["geometry"] = osm_water.geometry.buffer(0)
+                osm_geom = osm_water.union_all()
+                diff_gdf = gdf.copy()
+                diff_gdf["geometry"] = diff_gdf.geometry.difference(osm_geom)
+                diff_gdf = diff_gdf[~diff_gdf.is_empty]
+                # If difference removes all polygons because water detected overlaps the river margins,
+                # retain the detected water so the user can inspect the inundation corridor!
+                if not diff_gdf.empty:
+                    gdf = diff_gdf
+                    print(f"✅ Filtering complete. Remaining flood zones: {len(gdf)}")
+                else:
+                    print("ℹ️ Delineated water is situated within riverine drainage corridor. Retaining flood features.")
             else:
-                print("ℹ️ Delineated water is situated within riverine drainage corridor. Retaining flood features.")
-        else:
-            print("ℹ️ No permanent water found in OSM for this region.")
-    except Exception as e:
-        print(f"⚠️ OSM filter notice: {e}. Proceeding without OSM filter.")
+                print("ℹ️ No permanent water found in OSM for this region.")
+        except Exception as e:
+            print(f"⚠️ OSM filter notice: {e}. Proceeding without OSM filter.")
+    return gdf
+
+
+def _filter_permanent_water_tiled(gdf: gpd.GeoDataFrame, west: float, south: float, east: float, north: float) -> gpd.GeoDataFrame:
+    """
+    Process permanent water filtering for large areas by tiling the OSM query.
+    Splits the bounding box into smaller tiles and processes each tile separately.
+    """
+    print("   Using tiled OSM query strategy for large area...")
+    
+    # Calculate tile size (0.15° ≈ 15km) - smaller tiles for better OSM performance
+    tile_size_deg = 0.15
+    
+    # Calculate number of tiles needed
+    lat_tiles = max(1, int(np.ceil((north - south) / tile_size_deg)))
+    lng_tiles = max(1, int(np.ceil((east - west) / tile_size_deg)))
+    
+    print(f"   Querying OSM in {lat_tiles}×{lng_tiles} tile grid...")
+    
+    all_osm_water = []
+    
+    for i in range(lat_tiles):
+        for j in range(lng_tiles):
+            tile_south = south + i * tile_size_deg
+            tile_north = min(north, south + (i + 1) * tile_size_deg)
+            tile_west = west + j * tile_size_deg
+            tile_east = min(east, west + (j + 1) * tile_size_deg)
+            
+            # Add small overlap to avoid missing water bodies at tile boundaries
+            overlap = 0.005  # ~500m overlap
+            tile_south = max(south, tile_south - overlap)
+            tile_north = min(north, tile_north + overlap)
+            tile_west = max(west, tile_west - overlap)
+            tile_east = min(east, tile_east + overlap)
+            
+            tags = {"natural": ["water", "coastline"], "waterway": ["river", "stream"], "water": True}
+            try:
+                ox.settings.user_agent = "FloodWatch-AI/2.0 (Disaster-Response-System)"
+                ox.settings.overpass_settings = "[out:json][timeout:5]{maxsize}"
+                ox.settings.requests_timeout = 5
+                if hasattr(ox.settings, "timeout"):
+                    ox.settings.timeout = 5
+                ox.settings.max_query_area_size = 500_000_000
+                
+                tile_osm_water = ox.features_from_bbox(bbox=(tile_west, tile_south, tile_east, tile_north), tags=tags)
+                if not tile_osm_water.empty:
+                    all_osm_water.append(tile_osm_water)
+                    print(f"   Tile ({i},{j}): Found {len(tile_osm_water)} water bodies")
+            except Exception as e:
+                print(f"   ⚠️ Tile ({i},{j}) OSM query notice: {e}")
+                continue
+    
+    if not all_osm_water:
+        print("   No permanent water found in any tile.")
+        return gdf
+    
+    print(f"   Merging {len(all_osm_water)} tile results...")
+    # Merge all tile results
+    combined_osm_water = gpd.GeoDataFrame(pd.concat(all_osm_water, ignore_index=True), crs="EPSG:4326")
+    combined_osm_water["geometry"] = combined_osm_water.geometry.buffer(0)
+    osm_geom = combined_osm_water.union_all()
+    
+    diff_gdf = gdf.copy()
+    diff_gdf["geometry"] = diff_gdf.geometry.difference(osm_geom)
+    diff_gdf = diff_gdf[~diff_gdf.is_empty]
+    
+    # If difference removes all polygons because water detected overlaps the river margins,
+    # retain the detected water so the user can inspect the inundation corridor!
+    if not diff_gdf.empty:
+        gdf = diff_gdf
+        print(f"✅ Tiled filtering complete. Remaining flood zones: {len(gdf)}")
+    else:
+        print("ℹ️ Delineated water is situated within riverine drainage corridor. Retaining flood features.")
+    
     return gdf
 
 # ─────────────────────────────────────────────
@@ -551,8 +709,13 @@ async def predict_live(request: LiveScanRequest):
         image = np.nan_to_num(image)
         image = np.clip(image, -30, 0)
         image = (image + 30) / 30.0
+        
+        # Fetch JRC Global Surface Water occurrence for this bbox
+        target_shape = (image.shape[1], image.shape[2])
+        jrc_water = fetch_jrc_gsw_occurrence_sync(req_bbox, target_shape)
+        
         # Reconstruct the ratio + water channels the v4 model expects.
-        image_tensor = build_model_input(image[0], image[1])
+        image_tensor = build_model_input(image[0], image[1], water_prior=jrc_water)
         # 4. Inference
         predicted_mask = run_inference(image_tensor)
         # 5. Vectorise
@@ -623,11 +786,11 @@ async def predict_disaster(request: PredictDisasterRequest):
         traceback.print_exc()
         return {"status": "error", "error": str(e)}
 
-def run_live_sentinel1_inference(bbox: List[float]) -> Dict[str, Any]:
+def run_live_sentinel1_inference(bbox: List[float], stac_info: dict = None) -> Dict[str, Any]:
     """
-    Runs genuine U-Net inference on real-time Sentinel-1 SAR imagery fetched
-    directly from Microsoft Planetary Computer STAC catalog.
-    Returns empty/unavailable if no scene exists — ZERO hardcoded data.
+    Runs genuine U-Net inference on real-time Sentinel-1 SAR imagery.
+    If stac_info is provided (with vv_href, vh_href, scene_id, acquisition_time), 
+    uses it directly to avoid duplicate STAC queries.
     """
     empty_result = {
         "active": False,
@@ -644,91 +807,167 @@ def run_live_sentinel1_inference(bbox: List[float]) -> Dict[str, Any]:
         "status": "UNAVAILABLE",
         "message": "No recent Sentinel-1 SAR overpass found in catalog for this bbox."
     }
-    try:
-        import os
-        os.environ["GDAL_HTTP_TIMEOUT"] = "30"
-        os.environ["GDAL_HTTP_MAX_RETRY"] = "2"
-        catalog = Client.open(
-            "https://planetarycomputer.microsoft.com/api/stac/v1",
-            modifier=pc.sign_inplace,
-            timeout=15.0
-        )
-        search = catalog.search(
-            collections=["sentinel-1-rtc"],
-            bbox=bbox,
-            datetime="2023-01-01/2026-12-31",
-            sortby=[{"field": "datetime", "direction": "desc"}],
-            limit=1
-        )
-        items = list(search.items())
-        if not items:
+    
+    # If stac_info provided, use it directly (avoids duplicate STAC query)
+    if stac_info and stac_info.get("status") == "AVAILABLE":
+        vv_href = stac_info.get("vv_href") or stac_info.get("assets", {}).get("vv", {}).get("href")
+        vh_href = stac_info.get("vh_href") or stac_info.get("assets", {}).get("vh", {}).get("href")
+        scene_id = stac_info.get("scene_id")
+        acquisition_time = stac_info.get("acquisition_time")
+        source_provider = "planetary_computer"
+    else:
+        # Fall back to STAC query if no stac_info provided
+        def _process_provider(provider: str) -> Optional[Dict[str, Any]]:
+            max_retries = 3
+            base_delay = 2.0
+            
+            for attempt in range(max_retries):
+                try:
+                    import os
+                    os.environ["GDAL_HTTP_TIMEOUT"] = "30"
+                    os.environ["GDAL_HTTP_MAX_RETRY"] = "2"
+                    os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
+                    
+                    if provider == "planetary_computer":
+                        catalog = Client.open(
+                            "https://planetarycomputer.microsoft.com/api/stac/v1",
+                            modifier=pc.sign_inplace,
+                            timeout=15.0
+                        )
+                        search = catalog.search(
+                            collections=["sentinel-1-rtc"],
+                            bbox=bbox,
+                            datetime="2023-01-01T00:00:00Z/2026-12-31T23:59:59Z",
+                            sortby=[{"field": "datetime", "direction": "desc"}],
+                            limit=1
+                        )
+                        items = list(search.items())
+                        if not items:
+                            return None
+                        item = items[0]
+                        vv_href = item.assets["vv"].href
+                        vh_href = item.assets["vh"].href
+                        scene_id = item.id
+                        acquisition_time = str(item.datetime)
+                        return {"vv_href": vv_href, "vh_href": vh_href, "scene_id": scene_id, "acquisition_time": acquisition_time}
+                    else:
+                        url = "https://earth-search.aws.element84.com/v1/search"
+                        payload = {
+                            "collections": ["sentinel-1-grd"],
+                            "bbox": bbox,
+                            "datetime": "2023-01-01T00:00:00Z/2026-12-31T23:59:59Z",
+                            "limit": 1
+                        }
+                        resp = requests.post(url, json=payload, timeout=15.0)
+                        if resp.status_code != 200:
+                            return None
+                        features_list = resp.json().get("features", [])
+                        if not features_list:
+                            return None
+                        item = features_list[0]
+                        props = item.get("properties", {})
+                        vv_href = item.get("assets", {}).get("vv", {}).get("href")
+                        vh_href = item.get("assets", {}).get("vh", {}).get("href")
+                        if not vv_href or not vh_href:
+                            return None
+                        scene_id = item.get("id")
+                        acquisition_time = props.get("datetime") or props.get("start_datetime")
+                        return {"vv_href": vv_href, "vh_href": vh_href, "scene_id": scene_id, "acquisition_time": acquisition_time}
+                except Exception as e:
+                    logger.info(f"SAR provider {provider} attempt {attempt+1} failed: {e}")
+                    if attempt < 2:
+                        import time
+                        time.sleep(base_delay * (2 ** attempt))
+                    else:
+                        return None
+        
+        # Try providers
+        stac_data = None
+        for provider in ["planetary_computer", "aws"]:
+            stac_data = _process_provider(provider)
+            if stac_data:
+                break
+        
+        if not stac_data:
             return empty_result
+        
+        vv_href = stac_data["vv_href"]
+        vh_href = stac_data["vh_href"]
+        scene_id = stac_data["scene_id"]
+        acquisition_time = stac_data["acquisition_time"]
+    
+    # Download and process the SAR data
+    vv_ds = rioxarray.open_rasterio(vv_href)
+    vh_ds = rioxarray.open_rasterio(vh_href)
+    source_crs = str(vv_ds.rio.crs)
+    bbox_geom = box(*bbox)
+    bbox_gdf = gpd.GeoDataFrame(geometry=[bbox_geom], crs="EPSG:4326")
+    bbox_gdf_proj = bbox_gdf.to_crs(vv_ds.rio.crs)
+    proj_bbox = tuple(bbox_gdf_proj.total_bounds)
+    vv_clipped = vv_ds.rio.clip_box(*proj_bbox)
+    vh_clipped = vh_ds.rio.clip_box(*proj_bbox)
+    vv_data = vv_clipped.values.squeeze()
+    vh_data = vh_clipped.values.squeeze()
+    transform = vv_clipped.rio.transform()
 
-        item = items[0]
-        vv_href = item.assets["vv"].href
-        vh_href = item.assets["vh"].href
+    image = np.stack([vv_data, vh_data], axis=0)
+    epsilon = 1e-10
+    image = 10 * np.log10(np.clip(image, a_min=epsilon, a_max=None))
+    image = np.nan_to_num(image)
+    image = np.clip(image, -30, 0)
+    image = (image + 30) / 30.0
 
-        vv_ds = rioxarray.open_rasterio(vv_href)
-        vh_ds = rioxarray.open_rasterio(vh_href)
-        bbox_geom = box(*bbox)
-        bbox_gdf = gpd.GeoDataFrame(geometry=[bbox_geom], crs="EPSG:4326")
-        bbox_gdf_proj = bbox_gdf.to_crs(vv_ds.rio.crs)
-        proj_bbox = tuple(bbox_gdf_proj.total_bounds)
-        vv_clipped = vv_ds.rio.clip_box(*proj_bbox)
-        vh_clipped = vh_ds.rio.clip_box(*proj_bbox)
-        vv_data = vv_clipped.values.squeeze()
-        vh_data = vh_clipped.values.squeeze()
-        transform = vv_clipped.rio.transform()
-        source_crs = str(vv_ds.rio.crs)
+    # Fetch JRC Global Surface Water occurrence for this bbox to use as 4th channel
+    # This provides genuine permanent water baseline instead of specular prior
+    target_shape = (image.shape[1], image.shape[2])  # H, W
+    jrc_water = fetch_jrc_gsw_occurrence_sync(bbox, target_shape)
+    
+    image_tensor = build_model_input(image[0], image[1], water_prior=jrc_water)
+    predicted_mask = run_inference(image_tensor)
+    raw_polygons = [
+        shape(geom)
+        for geom, value in shapes(predicted_mask, transform=transform)
+        if value == 1.0
+    ]
+    if not raw_polygons:
+        res = dict(empty_result)
+        res["status"] = "AVAILABLE"
+        res["message"] = "Sentinel-1 SAR scene analyzed: No floodwater inundation detected."
+        res["scene_id"] = scene_id
+        res["acquisition_time"] = acquisition_time
+        return res
 
-        image = np.stack([vv_data, vh_data], axis=0)
-        epsilon = 1e-10
-        image = 10 * np.log10(np.clip(image, a_min=epsilon, a_max=None))
-        image = np.nan_to_num(image)
-        image = np.clip(image, -30, 0)
-        image = (image + 30) / 30.0
+    gdf = filter_polygons(raw_polygons, source_crs)
+    if gdf.empty:
+        res = dict(empty_result)
+        res["status"] = "AVAILABLE"
+        res["message"] = "Sentinel-1 SAR scene analyzed: Filtered permanent water / dry land."
+        res["scene_id"] = scene_id
+        res["acquisition_time"] = acquisition_time
+        return res
 
-        image_tensor = build_model_input(image[0], image[1])
-        predicted_mask = run_inference(image_tensor)
-        raw_polygons = [
-            shape(geom)
-            for geom, value in shapes(predicted_mask, transform=transform)
-            if value == 1.0
-        ]
-        if not raw_polygons:
-            res = dict(empty_result)
-            res["status"] = "AVAILABLE"
-            res["message"] = "Sentinel-1 SAR scene analyzed: No floodwater inundation detected."
-            res["scene_id"] = item.id
-            res["acquisition_time"] = str(item.datetime)
-            return res
+    features, summary = build_features(gdf)
+    res = {
+        "active": True,
+        "flooded_area_km2": summary.get("total_area_km2", 0.0),
+        "zones_count": summary.get("total_flood_zones", 0),
+        "severity": summary.get("overall_severity", "None"),
+        "features": features,
+        "summary": summary,
+        "status": "AVAILABLE",
+        "scene_id": scene_id,
+        "acquisition_time": acquisition_time
+}
+    return res
 
-        gdf = filter_polygons(raw_polygons, source_crs)
-        if gdf.empty:
-            res = dict(empty_result)
-            res["status"] = "AVAILABLE"
-            res["message"] = "Sentinel-1 SAR scene analyzed: Filtered permanent water / dry land."
-            res["scene_id"] = item.id
-            res["acquisition_time"] = str(item.datetime)
-            return res
-
-        features, summary = build_features(gdf)
-        return {
-            "active": True,
-            "flooded_area_km2": summary.get("total_area_km2", 0.0),
-            "zones_count": summary.get("total_flood_zones", 0),
-            "severity": summary.get("overall_severity", "None"),
-            "features": features,
-            "summary": summary,
-            "status": "AVAILABLE",
-            "scene_id": item.id,
-            "acquisition_time": str(item.datetime)
-        }
-    except Exception as e:
-        logger.warning(f"Live Sentinel-1 acquisition/inference notice: {e}")
-        err_res = dict(empty_result)
-        err_res["message"] = f"Live satellite STAC query: {e}"
-        return err_res
+    # Try providers in order: Planetary Computer (primary, HTTPS/SAS), then AWS (fallback, S3)
+    for provider in ["planetary_computer", "aws"]:
+        result = _process_provider(provider)
+        if result:
+            return result
+      
+    # Both providers failed
+    return empty_result
 
 def run_sar_tile_inference(target_lat: float = None, target_lng: float = None, radius_km: float = 5.0):
     """Compatibility wrapper that executes live Sentinel-1 satellite inference for coordinates"""
@@ -880,10 +1119,19 @@ async def unified_prediction(request: UnifiedPredictionRequest):
             try:
                 sar_res = await asyncio.wait_for(
                     asyncio.to_thread(run_live_sentinel1_inference, bbox),
-                    timeout=6.0
+                    timeout=90.0
                 )
+                # Validate SAR data freshness
+                if sar_res and sar_res.get("acquisition_time"):
+                    from datetime import datetime, timezone
+                    acq_time = datetime.fromisoformat(sar_res["acquisition_time"].replace('Z', '+00:00'))
+                    age_hours = (datetime.now(timezone.utc) - acq_time).total_seconds() / 3600
+                    sar_res["data_freshness_hours"] = round(age_hours, 1)
+                    sar_res["freshness_status"] = "FRESH" if age_hours <= 48 else ("STALE" if age_hours <= 168 else "EXPIRED")
+                    if age_hours > 48:
+                        logger.warning(f"SAR data age: {age_hours:.1f}h (exceeds 48h freshness threshold)")
             except asyncio.TimeoutError:
-                logger.info("Live SAR pass timed out in unified prediction; continuing with hydrological analysis.")
+                logger.info("Live SAR pass timed out (90s) in unified prediction; continuing with hydrological analysis.")
             except Exception as e:
                 logger.warning(f"Live SAR notice in unified prediction: {e}")
 
@@ -910,6 +1158,13 @@ async def unified_prediction(request: UnifiedPredictionRequest):
         geojson_out = hazard_res.get("geojson", {"type": "FeatureCollection", "features": []})
         if sar_res and sar_res.get("features"):
             geojson_out["features"].extend(sar_res["features"])
+        
+        # Filter out evacuation routes and management plan features from Predict response
+        # These belong to the Action Plan feature, not Predict
+        geojson_out["features"] = [
+            f for f in geojson_out["features"]
+            if f.get("properties", {}).get("layer") not in ["evacuation_route", "management_plan"]
+        ]
 
         # 5. Novel Deep Learning Multi-Horizon Forecaster & Epistemic Uncertainty (Phase 3)
         tcn_res = None
@@ -968,10 +1223,8 @@ async def unified_prediction(request: UnifiedPredictionRequest):
                 "submerged_roads_km": hazard_res.get("road_analysis", {}).get("submerged_length_km", 0.0),
                 "shelters_identified": len(hazard_res.get("emergency_shelters", [])),
                 "emergency_shelters": hazard_res.get("emergency_shelters", []),
-                "evacuation_routes": hazard_res.get("evacuation_routes", []),
                 "infrastructure_exposure": hazard_res.get("infrastructure_exposure", {})
             },
-            "management_response": risk_res["management_response"],
             "satellite_evidence": sar_res if sar_res else {
                 "active": False,
                 "dl_model": "EfficientNet-B3 U-Net (Trained on Sen1Floods11)",
@@ -1004,7 +1257,7 @@ async def execute_global_prediction():
         # a worker thread while the loop stays responsive.
         res = await asyncio.wait_for(
             asyncio.to_thread(global_engine.run_global_prediction),
-            timeout=120.0  # 2-minute cap for full planetary scan
+            timeout=300.0  # 5-minute cap for full planetary scan (80+ basins × 2 APIs each)
         )
         return res
     except asyncio.TimeoutError:
@@ -1220,21 +1473,62 @@ def get_geodesic_stage_info(lat: float, lng: float, km: float, prev_km: float = 
 
 def fetch_sentinel1_stac_scene(lat: float, lng: float, extent_km: float = 50.0) -> dict:
     """
-    Authoritative query for Sentinel-1 GRD imagery.
-    1. Primary: AWS Element84 Earth Search STAC (official Copernicus Sentinel-1 archive, open, zero rate limits).
-    2. Secondary: Microsoft Planetary Computer STAC.
+    Authoritative query for Sentinel-1 SAR imagery.
+    1. Primary: Microsoft Planetary Computer STAC (sentinel-1-rtc, HTTPS with SAS tokens, no credentials).
+    2. Secondary: AWS Element84 Earth Search STAC (sentinel-1-grd, S3 with AWS_NO_SIGN_REQUEST=YES).
     """
+    import os
+    os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
     bbox = get_geodesic_stage_info(lat, lng, extent_km)["bbox"]
 
-    # Provider 1: AWS Element84 Earth Search (Copernicus Sentinel-1 GRD)
+    # Provider 1: Microsoft Planetary Computer STAC (sentinel-1-rtc) - PRIMARY
+    try:
+        catalog_client = Client.open(
+            "https://planetarycomputer.microsoft.com/api/stac/v1",
+            modifier=pc.sign_inplace,
+            timeout=10.0
+        )
+        search = catalog_client.search(
+            collections=["sentinel-1-rtc"],
+            bbox=bbox,
+            datetime="2023-01-01T00:00:00Z/2026-12-31T23:59:59Z",
+            sortby=[{"field": "datetime", "direction": "desc"}],
+            limit=1
+        )
+        items = list(search.items())
+        if items:
+            f = items[0]
+            props = f.properties
+            polars = props.get("sar:polarizations", ["VV", "VH"])
+            vv_asset = f.assets.get("vv")
+            vh_asset = f.assets.get("vh")
+            return {
+                "source": "Microsoft Planetary Computer STAC (RTC)",
+                "scene_id": f.id,
+                "acquisition_time": str(f.datetime),
+                "platform": props.get("platform", "Sentinel-1A"),
+                "polarizations": "+".join(polars) if isinstance(polars, list) else str(polars),
+                "orbit": str(props.get("sat:orbit_state", "descending")).title(),
+                "status": "AVAILABLE",
+                "data_freshness": "RECENT",
+                "vv_href": vv_asset.href if vv_asset else None,
+                "vh_href": vh_asset.href if vh_asset else None,
+                "assets": {k: v.to_dict() if hasattr(v, 'to_dict') else {"href": v.href, "title": v.title} for k, v in f.assets.items()}
+            }
+    except Exception as e:
+        logger.info(f"Planetary Computer STAC notice: {e}")
+
+    # Provider 2: AWS Element84 Earth Search (sentinel-1-grd) - FALLBACK
     try:
         url = "https://earth-search.aws.element84.com/v1/search"
+        # Use RFC3339 datetime; no sortby (not supported by sentinel-1-grd)
         payload = {
             "collections": ["sentinel-1-grd"],
             "bbox": bbox,
+            "datetime": "2023-01-01T00:00:00Z/2026-12-31T23:59:59Z",
             "limit": 1
         }
-        resp = requests.post(url, json=payload, timeout=4.0)
+        resp = requests.post(url, json=payload, timeout=10.0)
         if resp.status_code == 200:
             features = resp.json().get("features", [])
             if features:
@@ -1244,47 +1538,20 @@ def fetch_sentinel1_stac_scene(lat: float, lng: float, extent_km: float = 50.0) 
                 platform_raw = props.get("platform", "Sentinel-1A")
                 platform_str = "Sentinel-1D" if "1d" in str(platform_raw).lower() else ("Sentinel-1B" if "1b" in str(platform_raw).lower() else "Sentinel-1A")
                 return {
-                    "source": "ESA Copernicus Sentinel-1 via AWS Earth Search",
+                    "source": "ESA Copernicus Sentinel-1 via AWS Earth Search (GRD)",
                     "scene_id": f.get("id"),
                     "acquisition_time": props.get("datetime") or props.get("start_datetime"),
                     "platform": platform_str,
                     "polarizations": "+".join(polars) if isinstance(polars, list) else str(polars),
                     "orbit": str(props.get("sat:orbit_state", "descending")).title(),
                     "status": "AVAILABLE",
-                    "data_freshness": "RECENT"
+                    "data_freshness": "RECENT",
+                    "vv_href": f.get("assets", {}).get("vv", {}).get("href"),
+                    "vh_href": f.get("assets", {}).get("vh", {}).get("href"),
+                    "assets": f.get("assets", {})
                 }
     except Exception as e:
-        logger.info(f"Earth Search notice: {e}")
-
-    # Provider 2: Microsoft Planetary Computer STAC
-    try:
-        catalog_client = Client.open(
-            "https://planetarycomputer.microsoft.com/api/stac/v1",
-            modifier=pc.sign_inplace
-        )
-        search = catalog_client.search(
-            collections=["sentinel-1-rtc"],
-            bbox=bbox,
-            datetime="2023-01-01/2026-12-31",
-            limit=1
-        )
-        items = list(search.items())
-        if items:
-            f = items[0]
-            props = f.properties
-            polars = props.get("sar:polarizations", ["VV", "VH"])
-            return {
-                "source": "Microsoft Planetary Computer STAC",
-                "scene_id": f.id,
-                "acquisition_time": str(f.datetime),
-                "platform": props.get("platform", "Sentinel-1A"),
-                "polarizations": "+".join(polars) if isinstance(polars, list) else str(polars),
-                "orbit": str(props.get("sat:orbit_state", "descending")).title(),
-                "status": "AVAILABLE",
-                "data_freshness": "RECENT"
-            }
-    except Exception as e:
-        logger.info(f"Planetary Computer notice: {e}")
+        logger.info(f"AWS Earth Search notice: {e}")
 
     # Truthful reporting when no satellite pass exists for this region
     return {
@@ -1310,43 +1577,111 @@ class MultiScaleSarRequest(BaseModel):
 @app.post("/api/sar-multiscale")
 async def sar_multiscale(request: MultiScaleSarRequest):
     lat, lng = request.lat, request.lng
-    print(f"🛰️ Multi-Scale SAR Radar Analysis for [{lat:.4f}, {lng:.4f}] across 5, 10, 25, 50 km...")
+    print(f"🛰️ Multi-Scale SAR Radar Analysis for [{lat:.4f}, {lng:.4f}] across 5, 10, 15 km...")
 
-    extents = [5, 10, 25, 50]
-    stage_labels = ["01 CORE (5×5 km)", "02 CATCHMENT (10×10 km)", "03 SUB-BASIN (25×25 km)", "04 MACRO (50×50 km)"]
+    # Use 15km as max extent (reliable for CPU inference in ~30-60s)
+    # This covers 3 stages: 5, 10, 15 km
+    extents = [5, 10, 15]
+    stage_labels = ["01 CORE (5×5 km)", "02 CATCHMENT (10×10 km)", "03 SUB-BASIN (15×15 km)"]
 
-    # 1. Authoritative live STAC catalog query for genuine Sentinel-1 scene pass
-    stac_info = fetch_sentinel1_stac_scene(lat, lng, 50.0)
+    # 1. Authoritative live STAC catalog query for genuine Sentinel-1 scene pass (15km extent)
+    stac_info = fetch_sentinel1_stac_scene(lat, lng, 15.0)
 
     # 2. Run Sentinel-1 C-band SAR U-Net deep learning inference if imagery is cataloged
+    # Use 15km extent for full analysis (covers all stages: 5, 10, 15 km)
     all_features = []
     flooded_km2 = 0.0
     sar_res = None
+    sar_status = "UNAVAILABLE"
+    sar_message = ""
 
     if stac_info.get("status") == "AVAILABLE":
-        core_bbox = get_geodesic_stage_info(lat, lng, 10.0)["bbox"]
+        # Use 15km extent for full analysis (covers all stages: 5, 10, 15 km)
+        full_bbox = get_geodesic_stage_info(lat, lng, 15.0)["bbox"]
         try:
+            # Pass stac_info to avoid duplicate STAC query
             sar_res = await asyncio.wait_for(
-                asyncio.to_thread(run_live_sentinel1_inference, core_bbox),
-                timeout=7.0
+                asyncio.to_thread(run_live_sentinel1_inference, full_bbox, stac_info),
+                timeout=90.0  # Reasonable timeout for 15km area
             )
             if sar_res and sar_res.get("features"):
                 all_features = sar_res["features"]
                 flooded_km2 = sar_res.get("flooded_area_km2", 0.0)
+                sar_status = "AVAILABLE"
+                sar_message = f"Sentinel-1 SAR scene analyzed across 15×15 km: {len(all_features)} inundation polygons detected ({flooded_km2:.2f} km²)"
+            elif sar_res and sar_res.get("status") == "AVAILABLE":
+                sar_status = "AVAILABLE"
+                sar_message = "Sentinel-1 SAR scene analyzed across 15×15 km: No floodwater inundation detected."
+            else:
+                sar_message = sar_res.get("message", "SAR inference completed with no features")
         except asyncio.TimeoutError:
-            logger.info("SAR live inference pass timed out after 7s; transitioning to calibrated hydrological extent.")
+            logger.info("SAR live inference pass timed out after 90s; trying smaller 10km extent...")
+            sar_message = "SAR inference timed out (90s) for 15km extent."
+            # Fallback: try 10km extent
+            try:
+                smaller_bbox = get_geodesic_stage_info(lat, lng, 10.0)["bbox"]
+                sar_res = await asyncio.wait_for(
+                    asyncio.to_thread(run_live_sentinel1_inference, smaller_bbox, stac_info),
+                    timeout=60.0
+                )
+                if sar_res and sar_res.get("features"):
+                    all_features = sar_res["features"]
+                    flooded_km2 = sar_res.get("flooded_area_km2", 0.0)
+                    sar_status = "AVAILABLE"
+                    sar_message = f"Sentinel-1 SAR scene analyzed across 10×10 km (fallback): {len(all_features)} inundation polygons detected ({flooded_km2:.2f} km²)"
+                elif sar_res and sar_res.get("status") == "AVAILABLE":
+                    sar_status = "AVAILABLE"
+                    sar_message = "Sentinel-1 SAR scene analyzed across 10×10 km (fallback): No floodwater inundation detected."
+                else:
+                    sar_message = "SAR inference completed with no features (10km fallback)"
+            except Exception as fallback_e:
+                logger.warning(f"SAR 10km fallback also failed: {fallback_e}")
+                sar_message = f"SAR inference timed out for 15km and 10km fallback failed: {fallback_e}"
         except Exception as e:
             logger.warning(f"SAR live inference notice: {e}")
+            sar_message = f"SAR inference error: {e}"
+    else:
+        sar_message = stac_info.get("status_description", "No recent Sentinel-1 SAR overpass cataloged for this area.")
 
-    # Fallback to calibrated hydrological inundation extent if no live satellite water features
-    # were detected in the catalog pass, so the user always sees the flooded area footprint
-    flood_source = "ESA_SENTINEL1_SAR_UNET"
-    if not all_features:
-        pred_features, p_src = _generate_predicted_flood_extent(lat, lng, 1.0)
-        if pred_features:
-            all_features = pred_features
-            flooded_km2 = sum(f.get("properties", {}).get("area_km2", 0.0) for f in all_features)
-            flood_source = p_src
+    # NO SYNTHETIC FALLBACK: If SAR unavailable, report honestly
+    flood_source = "ESA_SENTINEL1_SAR_UNET" if sar_status == "AVAILABLE" else "UNAVAILABLE"
+
+    # 3. Distribute detected flood features across stages based on actual geographic location
+    # Each feature is assigned to the stage whose bbox contains its centroid
+    stage_features = [[] for _ in extents]
+    stage_flooded_km2 = [0.0 for _ in extents]
+    stage_danger_counts = [{"Low": 0, "Medium": 0, "High": 0, "Critical": 0} for _ in extents]
+
+    if all_features:
+        # Build stage bboxes for point-in-polygon checks
+        stage_bboxes = []
+        for idx, km in enumerate(extents):
+            prev_km = extents[idx - 1] if idx > 0 else 0.0
+            stage_geo = get_geodesic_stage_info(lat, lng, km, prev_km)
+            # bbox = [west, south, east, north]
+            stage_bboxes.append(stage_geo["bbox"])
+
+        for feat in all_features:
+            geom = shape(feat["geometry"])
+            centroid = geom.centroid
+            feat_lng, feat_lat = centroid.x, centroid.y
+
+            # Find which stage this feature belongs to (first stage whose bbox contains the centroid)
+            assigned_stage = None
+            for idx, bbox in enumerate(stage_bboxes):
+                if bbox[0] <= feat_lng <= bbox[2] and bbox[1] <= feat_lat <= bbox[3]:
+                    assigned_stage = idx
+                    break
+            
+            # If not in any stage (shouldn't happen since we ran on 50km), assign to last stage
+            if assigned_stage is None:
+                assigned_stage = len(extents) - 1
+
+            stage_features[assigned_stage].append(feat)
+            area = feat["properties"].get("area_km2", 0.0)
+            stage_flooded_km2[assigned_stage] += area
+            danger = feat["properties"].get("danger_level", "Low")
+            stage_danger_counts[assigned_stage][danger] += 1
 
     stages = []
     now_utc_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1355,14 +1690,17 @@ async def sar_multiscale(request: MultiScaleSarRequest):
         stage_geo = get_geodesic_stage_info(lat, lng, km, prev_km)
         bbox = stage_geo["bbox"]
 
-        is_avail = (stac_info.get("status") == "AVAILABLE")
-        scene_id = stac_info.get("scene_id") or f"S1A_IW_GRDH_1SDV_{datetime.now(timezone.utc).strftime('%Y%m%d')}_ORBIT"
-        acq_time = stac_info.get("acquisition_time") or now_utc_str
+        is_avail = (sar_status == "AVAILABLE")
+        scene_id = stac_info.get("scene_id")
+        acq_time = stac_info.get("acquisition_time")
         freshness = stac_info.get("data_freshness")
         if not freshness or freshness == "NOT_AVAILABLE":
-            freshness = "RECENT"
+            freshness = "NOT_AVAILABLE"
 
-        stage_flood_km2 = round(flooded_km2 * min(1.0, 0.45 + (idx * 0.18)), 2)
+        # Use actual flooded area from features assigned to this stage
+        stage_flood_km2 = round(stage_flooded_km2[idx], 2) if is_avail else 0.0
+        stage_zones = len(stage_features[idx]) if is_avail else 0
+        stage_danger = stage_danger_counts[idx] if is_avail else {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
 
         stages.append({
             "stage_idx": idx,
@@ -1375,7 +1713,7 @@ async def sar_multiscale(request: MultiScaleSarRequest):
                 "new_analyzed_area_km2": stage_geo["new_analyzed_area_km2"]
             },
             "satellite_radar_sar": {
-                "status": "AVAILABLE",
+                "status": sar_status,
                 "data_freshness": freshness,
                 "scene_id": scene_id,
                 "acquisition_time": acq_time,
@@ -1383,27 +1721,31 @@ async def sar_multiscale(request: MultiScaleSarRequest):
                 "polarizations": stac_info.get("polarizations", "VV+VH"),
                 "orbit": stac_info.get("orbit") or "Descending",
                 "resolution": "10 meters C-band (5.405 GHz)",
-                "status_description": f"Verified Sentinel-1 C-band SAR pass ({stac_info.get('orbit') or 'Descending'}, {stac_info.get('polarizations') or 'VV+VH'}) with U-Net backscatter segmentation ({stage_flood_km2:.2f} km² water).",
+                "status_description": sar_message,
                 "flooded_area_km2": stage_flood_km2,
-                "model": "EfficientNet-B3 U-Net (Trained on Sen1Floods11 dual-polarization backscatter)"
+                "flood_zones_detected": stage_zones,
+                "danger_breakdown": stage_danger,
+                "model": "EfficientNet-B3 U-Net (Trained on Sen1Floods11 dual-polarization backscatter)" if is_avail else "Not executed"
             }
         })
 
     summary = {
-        "total_flood_zones": max(1, len(all_features)),
-        "total_area_km2": round(flooded_km2, 2),
-        "overall_severity": "Critical" if flooded_km2 > 5.0 else ("High" if flooded_km2 > 2.0 else "Medium"),
+        "total_flood_zones": len(all_features) if is_avail else 0,
+        "total_area_km2": round(flooded_km2, 2) if is_avail else 0.0,
+        "overall_severity": "Critical" if flooded_km2 > 5.0 else ("High" if flooded_km2 > 2.0 else "Medium") if is_avail else "Unknown",
         "danger_breakdown": {
-            "Low": max(0, len(all_features) - 1),
-            "Medium": 1 if flooded_km2 <= 2.0 else 0,
-            "High": 1 if 2.0 < flooded_km2 <= 5.0 else 0,
-            "Critical": 1 if flooded_km2 > 5.0 else 0
+            "Low": 0,
+            "Medium": 0,
+            "High": 0,
+            "Critical": 0
         },
-        "flood_source": flood_source
+        "flood_source": flood_source,
+        "sar_status": sar_status,
+        "sar_message": sar_message
     }
 
     return {
-        "status": "success",
+        "status": "success" if is_avail else "unavailable",
         "coordinates": {"lat": lat, "lng": lng},
         "stages": stages,
         "geojson": {"type": "FeatureCollection", "features": all_features},
@@ -1418,6 +1760,8 @@ class MultiScaleImpactRequest(BaseModel):
     lng: float
     depth: Optional[float] = None
     estimated_depth_m: float = 1.0
+    use_sar: bool = True
+    use_prediction: bool = True
 
 @app.post("/impact-multiscale")
 @app.post("/api/impact-multiscale")
@@ -1429,9 +1773,87 @@ async def impact_multiscale(request: MultiScaleImpactRequest):
     extents = [5, 10, 25, 50]
     stage_labels = ["01 CORE (5×5 km)", "02 CATCHMENT (10×10 km)", "03 SUB-BASIN (25×25 km)", "04 MACRO (50×50 km)"]
 
-    # Generate predicted flood extent based on live hydrological risk conditions & scenario depth
-    # Enables the Impact Matrix to operate in PREDICTION mode across all 4 spatial scales
-    flood_features, flood_source = _generate_predicted_flood_extent(lat, lng, depth)
+    # 1. Try to get real SAR flood extent first (using dual-provider STAC check like sar_multiscale)
+    flood_features = []
+    flood_source = "UNAVAILABLE"
+    sar_acquisition_time = None
+    sar_res = None
+    
+    if request.use_sar:
+        d_lat = 6.0 / 111.0
+        d_lon = 6.0 / (111.0 * max(0.2, math.cos(math.radians(lat))))
+        core_bbox = [round(lng - d_lon, 5), round(lat - d_lat, 5), round(lng + d_lon, 5), round(lat + d_lat, 5)]
+        
+        # First check STAC catalog for available Sentinel-1 scene (dual-provider)
+        stac_info = fetch_sentinel1_stac_scene(lat, lng, 10.0)
+        
+        if stac_info.get("status") == "AVAILABLE":
+            try:
+                sar_res = await asyncio.wait_for(
+                    asyncio.to_thread(run_live_sentinel1_inference, core_bbox),
+                    timeout=90.0
+                )
+                if sar_res and sar_res.get("features"):
+                    flood_features = sar_res["features"]
+                    flood_source = "ESA_SENTINEL1_SAR_UNET"
+                    sar_acquisition_time = sar_res.get("acquisition_time")
+                    sar_res = sar_res  # Store for later use
+                    print(f"✅ Using real SAR flood extent: {len(flood_features)} features")
+            except asyncio.TimeoutError:
+                logger.info("SAR timed out for impact assessment (90s)")
+            except Exception as e:
+                logger.warning(f"SAR error for impact: {e}")
+        else:
+            logger.info("No recent Sentinel-1 SAR overpass cataloged for this area.")
+    
+    # 2. Fall back to unified prediction flood extent if SAR unavailable
+    if not flood_features and request.use_prediction:
+        try:
+            # Use SAR data if we already have it, otherwise run unified prediction with SAR
+            if sar_res and sar_res.get("features"):
+                unified_res = await asyncio.wait_for(
+                    asyncio.to_thread(lambda: asyncio.run(unified_prediction(UnifiedPredictionRequest(
+                        lat=lat, lng=lng, radius_km=6.0, run_sar_inference=False
+                    )))),
+                    timeout=60.0
+                )
+                # Merge SAR features into unified result
+                if unified_res and unified_res.get("geojson", {}).get("features"):
+                    flood_features = [f for f in unified_res["geojson"]["features"] 
+                                    if f.get("properties", {}).get("type") == "Flood" or 
+                                       f.get("properties", {}).get("zone_type") in ["Critical Inundation Core", "Active Waterway Basin", "Advisory / Peripheral Runoff Zone", "Primary Drainage Runoff Corridor"]]
+                    # Add SAR features if not already present
+                    if sar_res and sar_res.get("features"):
+                        existing_geoms = [shape(f["geometry"]) for f in flood_features]
+                        for sar_f in sar_res["features"]:
+                            sar_geom = shape(sar_f["geometry"])
+                            if not any(sar_geom.intersects(g) for g in existing_geoms):
+                                flood_features.append(sar_f)
+                if flood_features:
+                    flood_source = "UNIFIED_PREDICTION_HAZARD + SAR"
+                    print(f"✅ Using unified prediction hazard zones + SAR: {len(flood_features)} features")
+            else:
+                # Run unified prediction with SAR enabled
+                unified_res = await asyncio.wait_for(
+                    asyncio.to_thread(lambda: asyncio.run(unified_prediction(UnifiedPredictionRequest(
+                        lat=lat, lng=lng, radius_km=6.0, run_sar_inference=True
+                    )))),
+                    timeout=120.0
+                )
+                if unified_res and unified_res.get("geojson", {}).get("features"):
+                    flood_features = [f for f in unified_res["geojson"]["features"] 
+                                    if f.get("properties", {}).get("type") == "Flood" or 
+                                       f.get("properties", {}).get("zone_type") in ["Critical Inundation Core", "Active Waterway Basin", "Advisory / Peripheral Runoff Zone", "Primary Drainage Runoff Corridor"]]
+                    if flood_features:
+                        flood_source = "UNIFIED_PREDICTION_HAZARD"
+                        print(f"✅ Using unified prediction hazard zones: {len(flood_features)} features")
+        except Exception as e:
+            logger.warning(f"Unified prediction fallback failed: {e}")
+    
+    # 3. NO SYNTHETIC FALLBACK - if no real flood data, report honestly
+    if not flood_features:
+        flood_source = "NO_REAL_FLOOD_DATA"
+        print("⚠️ No real flood extent available - SAR unavailable and prediction produced no flood zones")
 
     flood_gdf = gpd.GeoDataFrame.from_features(flood_features) if flood_features else gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
     if not flood_gdf.empty and flood_gdf.crs is None:
@@ -1786,17 +2208,18 @@ async def action_multiscale(request: MultiScaleActionRequest):
                 "priority": "P2",
                 "urgency": meta["urgency"]
             })
+            # NO synthetic dewatering pump staging — requires real infrastructure survey
             tier_actions.append({
                 "id": f"act-{idx+1}-2",
-                "title": f"Pre-Position Mobile High-Capacity Dewatering Pumps ({meta['scale']})",
-                "type": "dewatering",
+                "title": f"Infrastructure Survey Required for {meta['scale']} Resource Deployment",
+                "type": "assessment_required",
                 "action_level": "PREPARE",
-                "desc": f"Stage 500 m³/hr trailer-mounted diesel dewatering pump units at primary basin junction to relieve agrarian waterlogging.",
-                "location_name": f"Basin Drainage Junction ({km}×{km} km)",
+                "desc": "No verified facilities or infrastructure found in OSM for this tier. Cannot safely pre-position resources without ground truth. Contact local DDMA/NDRF for site assessment.",
+                "location_name": f"Assessment Required: {meta['scale']}",
                 "lat": round(lat, 5),
                 "lng": round(lng, 5),
-                "reason": f"Sustain drainage during high river discharge ({flow_ratio:.1f}x mean flow).",
-                "cost_usd": round(budget * 0.10, 0),
+                "reason": "Zero OSM-mapped critical infrastructure, healthcare, education, or transport assets in this tier. Resource deployment requires local ground survey.",
+                "cost_usd": 0,
                 "priority": "P3",
                 "urgency": meta["urgency"]
             })

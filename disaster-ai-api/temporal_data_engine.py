@@ -16,6 +16,8 @@ import requests
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Tuple
 
+from freshness_validator import get_freshness_validator
+
 logger = logging.getLogger("TemporalDataEngine")
 logging.basicConfig(level=logging.INFO)
 
@@ -198,23 +200,46 @@ class TemporalDataEngine:
                 discharges = daily.get("river_discharge", [])
                 means = daily.get("river_discharge_mean", [])
                 maxes = daily.get("river_discharge_max", [])
+                mins = daily.get("river_discharge_min", [])
 
                 cur_q = float(discharges[0]) if (discharges and discharges[0] is not None) else 0.0
                 mean_q = float(means[0]) if (means and means[0] is not None and float(means[0]) > 0.0) else max(cur_q, 1.0)
                 mean_q = max(1.0, mean_q)
                 peak_forecast_q = max([x for x in discharges if x is not None], default=cur_q)
 
+                # Freshness validation
+                observation_time = times[0] if times else None
+                if observation_time:
+                    try:
+                        obs_dt = datetime.fromisoformat(observation_time.replace('Z', '+00:00'))
+                    except Exception:
+                        obs_dt = None
+                else:
+                    obs_dt = None
+                freshness = get_freshness_validator().validate(
+                    "glofas_discharge",
+                    observation_time=obs_dt.isoformat() if obs_dt else None,
+                    retrieval_time=datetime.now(timezone.utc)
+                )
+                forecast_freshness = get_freshness_validator().validate(
+                    "glofas_forecast",
+                    forecast_issue_time=obs_dt.isoformat() if obs_dt else None,
+                    retrieval_time=datetime.now(timezone.utc)
+                )
+
                 series = []
                 for i in range(len(times)):
                     q_val = discharges[i] if i < len(discharges) and discharges[i] is not None else cur_q
                     m_val = means[i] if i < len(means) and means[i] is not None else mean_q
                     mx_val = maxes[i] if i < len(maxes) and maxes[i] is not None else q_val
+                    mn_val = mins[i] if i < len(mins) and mins[i] is not None else q_val
                     series.append({
                         "date": times[i],
                         "day_offset": i,
                         "discharge_m3s": round(float(q_val), 1),
                         "mean_m3s": round(float(m_val), 1),
-                        "max_m3s": round(float(mx_val), 1)
+                        "max_m3s": round(float(mx_val), 1),
+                        "min_m3s": round(float(mn_val), 1)
                     })
 
                 return {
@@ -224,7 +249,11 @@ class TemporalDataEngine:
                     "recurrence_2yr_m3s": round(float(mean_q * 1.45), 1),
                     "recurrence_5yr_m3s": round(float(mean_q * 1.85), 1),
                     "recurrence_20yr_m3s": round(float(mean_q * 2.40), 1),
-                    "forecast_series": series
+                    "forecast_series": series,
+                    "freshness": {
+                        "observation": freshness,
+                        "forecast": forecast_freshness
+                    }
                 }, None
             return {}, f"HTTP {resp.status_code}"
         except Exception as e:

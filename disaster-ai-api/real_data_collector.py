@@ -16,6 +16,8 @@ import json
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 
+from freshness_validator import get_freshness_validator, FreshnessStatus
+
 logger = logging.getLogger("RealDataCollector")
 logging.basicConfig(level=logging.INFO)
 
@@ -570,6 +572,11 @@ class RealDataCollector:
                 data = resp.json()
                 hourly = data.get("hourly", {})
                 current = data.get("current", {})
+                
+                # Extract timestamps for freshness validation
+                hourly_times = hourly.get("time", [])
+                current_time = current.get("time")
+                generation_time = data.get("generationtime_ms")
 
                 precips = hourly.get("precipitation", [])
                 time_now_idx = min(72, len(precips) - 1) if precips else 0
@@ -610,6 +617,27 @@ class RealDataCollector:
                 capes = hourly.get("cape", [])
                 cur_cape = float(capes[time_now_idx] or 0.0) if time_now_idx < len(capes) else 0.0
 
+                # Freshness validation
+                observation_time = hourly_times[time_now_idx] if time_now_idx < len(hourly_times) else current_time
+                # Parse timestamps to ensure timezone-aware datetime objects
+                if observation_time:
+                    try:
+                        obs_dt = datetime.fromisoformat(observation_time.replace('Z', '+00:00'))
+                    except Exception:
+                        obs_dt = None
+                else:
+                    obs_dt = None
+                freshness = get_freshness_validator().validate(
+                    "ecmwf_observation",
+                    observation_time=obs_dt.isoformat() if obs_dt else None,
+                    retrieval_time=datetime.now(timezone.utc)
+                )
+                forecast_freshness = get_freshness_validator().validate(
+                    "ecmwf_forecast",
+                    forecast_issue_time=current_time.isoformat() if current_time else None,
+                    retrieval_time=datetime.now(timezone.utc)
+                )
+
                 return {
                     "temperature_2m_c": current.get("temperature_2m"),
                     "relative_humidity_pct": current.get("relative_humidity_2m"),
@@ -622,7 +650,12 @@ class RealDataCollector:
                     "soil_moisture_surface_m3m3": surface_sm,
                     "soil_moisture_root_m3m3": root_sm,
                     "soil_moisture_deep_m3m3": cur_sm_27_81,
-                    "cape_j_kg": cur_cape
+                    "cape_j_kg": cur_cape,
+                    "freshness": {
+                        "observation": freshness,
+                        "forecast": forecast_freshness,
+                        "generation_time_ms": generation_time
+                    }
                 }, None
             return {}, f"HTTP {resp.status_code}"
         except Exception as e:
@@ -645,11 +678,32 @@ class RealDataCollector:
                 discharges = daily.get("river_discharge", [])
                 means = daily.get("river_discharge_mean", [])
                 maxes = daily.get("river_discharge_max", [])
+                times = daily.get("time", [])
 
                 cur_q = float(discharges[0]) if (discharges and discharges[0] is not None) else 0.0
                 mean_q = float(means[0]) if (means and means[0] is not None and float(means[0]) > 0.0) else max(cur_q, 1.0)
                 mean_q = max(1.0, mean_q)
                 peak_forecast_q = max([x for x in discharges if x is not None], default=cur_q)
+
+                # Freshness validation
+                observation_time = times[0] if times else None
+                if observation_time:
+                    try:
+                        obs_dt = datetime.fromisoformat(observation_time.replace('Z', '+00:00'))
+                    except Exception:
+                        obs_dt = None
+                else:
+                    obs_dt = None
+                freshness = get_freshness_validator().validate(
+                    "glofas_discharge",
+                    observation_time=obs_dt.isoformat() if obs_dt else None,
+                    retrieval_time=datetime.now(timezone.utc)
+                )
+                forecast_freshness = get_freshness_validator().validate(
+                    "glofas_forecast",
+                    forecast_issue_time=observation_time,
+                    retrieval_time=datetime.now(timezone.utc)
+                )
 
                 return {
                     "current_discharge_m3s": cur_q,
@@ -657,7 +711,11 @@ class RealDataCollector:
                     "peak_forecast_discharge_m3s": peak_forecast_q,
                     "recurrence_2yr_m3s": mean_q * 1.45,
                     "recurrence_5yr_m3s": mean_q * 1.85,
-                    "recurrence_20yr_m3s": mean_q * 2.40
+                    "recurrence_20yr_m3s": mean_q * 2.40,
+                    "freshness": {
+                        "observation": freshness,
+                        "forecast": forecast_freshness
+                    }
                 }, None
             return {}, f"HTTP {resp.status_code}"
         except Exception as e:

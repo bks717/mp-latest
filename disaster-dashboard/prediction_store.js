@@ -6,7 +6,7 @@
 
 const { MongoClient, ObjectId } = require('mongodb');
 
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/floodwatch';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://mongodb:27017/floodwatch';
 const DB_NAME = 'floodwatch';
 const COLLECTION_NAME = 'predictions';
 const GLOBAL_COLLECTION_NAME = 'global_predictions';
