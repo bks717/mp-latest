@@ -1,4 +1,5 @@
 import sys
+import time
 import asyncio
 from datetime import datetime, timezone
 import json
@@ -440,7 +441,16 @@ def filter_polygons(raw_polygons: list, source_crs: str) -> gpd.GeoDataFrame:
             # Set large max_query_area_size to prevent OSMnx from splitting into thousands of sub-queries
             ox.settings.max_query_area_size = 500_000_000  # 500 km² in m²
             # Note: OSMnx 2.0+ takes bbox=(left, bottom, right, top) = (west, south, east, north)
-            osm_water = ox.features_from_bbox(bbox=(west, south, east, north), tags=tags)
+            # Use strict 3s timeout with unblocked shutdown to avoid Overpass hang
+            import concurrent.futures
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            try:
+                future = executor.submit(ox.features_from_bbox, bbox=(west, south, east, north), tags=tags)
+                osm_water = future.result(timeout=3.0)
+                executor.shutdown(wait=False, cancel_futures=True)
+            except Exception as e_to:
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise e_to
             if not osm_water.empty:
                 print(f"🌊 Found {len(osm_water)} permanent water bodies. Filtering...")
                 osm_water["geometry"] = osm_water.geometry.buffer(0)
@@ -1568,6 +1578,8 @@ def fetch_sentinel1_stac_scene(lat: float, lng: float, extent_km: float = 50.0) 
 
 # ─────────────────────────────────────────────
 # Endpoint 9: Multi-Scale SAR Radar Acquisition & Inference (5km -> 50km)
+_LATEST_SAR_SCAN = None
+
 # ─────────────────────────────────────────────
 class MultiScaleSarRequest(BaseModel):
     lat: float
@@ -1584,11 +1596,10 @@ async def sar_multiscale(request: MultiScaleSarRequest):
     extents = [5, 10, 15]
     stage_labels = ["01 CORE (5×5 km)", "02 CATCHMENT (10×10 km)", "03 SUB-BASIN (15×15 km)"]
 
-    # 1. Authoritative live STAC catalog query for genuine Sentinel-1 scene pass (15km extent)
-    stac_info = fetch_sentinel1_stac_scene(lat, lng, 15.0)
+    # 1. Authoritative live STAC catalog query for genuine Sentinel-1 scene pass (10km catchment extent)
+    stac_info = fetch_sentinel1_stac_scene(lat, lng, 10.0)
 
     # 2. Run Sentinel-1 C-band SAR U-Net deep learning inference if imagery is cataloged
-    # Use 15km extent for full analysis (covers all stages: 5, 10, 15 km)
     all_features = []
     flooded_km2 = 0.0
     sar_res = None
@@ -1596,13 +1607,12 @@ async def sar_multiscale(request: MultiScaleSarRequest):
     sar_message = ""
 
     if stac_info.get("status") == "AVAILABLE":
-        # Use 15km extent for full analysis (covers all stages: 5, 10, 15 km)
-        full_bbox = get_geodesic_stage_info(lat, lng, 15.0)["bbox"]
+        full_bbox = get_geodesic_stage_info(lat, lng, 10.0)["bbox"]
         try:
-            # Pass stac_info to avoid duplicate STAC query
+            # Responsive 35s timeout for fast real-time inference
             sar_res = await asyncio.wait_for(
                 asyncio.to_thread(run_live_sentinel1_inference, full_bbox, stac_info),
-                timeout=90.0  # Reasonable timeout for 15km area
+                timeout=35.0
             )
             if sar_res and sar_res.get("features"):
                 all_features = sar_res["features"]
@@ -1622,7 +1632,7 @@ async def sar_multiscale(request: MultiScaleSarRequest):
                 smaller_bbox = get_geodesic_stage_info(lat, lng, 10.0)["bbox"]
                 sar_res = await asyncio.wait_for(
                     asyncio.to_thread(run_live_sentinel1_inference, smaller_bbox, stac_info),
-                    timeout=60.0
+                    timeout=25.0
                 )
                 if sar_res and sar_res.get("features"):
                     all_features = sar_res["features"]
@@ -1742,6 +1752,15 @@ async def sar_multiscale(request: MultiScaleSarRequest):
         "flood_source": flood_source,
         "sar_status": sar_status,
         "sar_message": sar_message
+    }
+
+    global _LATEST_SAR_SCAN
+    _LATEST_SAR_SCAN = {
+        "lat": lat,
+        "lng": lng,
+        "features": all_features,
+        "timestamp": time.time(),
+        "summary": summary
     }
 
     return {
@@ -2029,237 +2048,48 @@ class MultiScaleActionRequest(BaseModel):
     lng: float
     budget_usd: float = 100000.0
     budget: float = 100000.0
+    user_profile: Optional[str] = "vehicle"
+    time_horizon_hours: Optional[int] = 0
+    radius_km: Optional[float] = 6.0
+    sar_features: Optional[List[Dict[str, Any]]] = None
 
 @app.post("/action-multiscale")
 @app.post("/api/action-multiscale")
+@app.post("/action-plan/generate")
+@app.post("/api/action-plan/generate")
 async def action_multiscale(request: MultiScaleActionRequest):
     lat, lng = request.lat, request.lng
     budget = request.budget if request.budget != 100000.0 else request.budget_usd
-    print(f"🎯 Multi-Scale Action Plan for [{lat:.4f}, {lng:.4f}] (budget=${budget:,.0f}) across 5, 10, 25, 50 km...")
+    user_profile = getattr(request, "user_profile", "vehicle") or "vehicle"
+    horizon = int(getattr(request, "time_horizon_hours", 0) or 0)
+    radius_km = float(getattr(request, "radius_km", 6.0) or 6.0)
+
+    print(f"🎯 Enhanced Multi-Scale Action Plan for [{lat:.4f}, {lng:.4f}] (profile={user_profile}, budget=${budget:,.0f}, horizon=T+{horizon}h)...")
     
-    temporal_data = temporal_engine.collect_temporal_dataset(lat, lng, radius_km=6.0)
-    snap = temporal_data.get("current_snapshot", {})
-    flow_ratio = snap.get("discharge_ratio", {}).get("value", 1.0)
-    slope = snap.get("slope", {}).get("value", 1.2)
-    elev = snap.get("elevation", {}).get("value", 35.0)
+    sar_feats = getattr(request, "sar_features", None)
+    if not sar_feats and _LATEST_SAR_SCAN and (time.time() - _LATEST_SAR_SCAN.get("timestamp", 0) < 3600):
+        s_lat = _LATEST_SAR_SCAN.get("lat", 0.0)
+        s_lng = _LATEST_SAR_SCAN.get("lng", 0.0)
+        dist_km = math.hypot(lat - s_lat, (lng - s_lng) * max(0.2, math.cos(math.radians(lat)))) * 111.0
+        if dist_km <= 30.0:
+            sar_feats = _LATEST_SAR_SCAN.get("features", [])
+            print(f"🛰️ Auto-integrated {len(sar_feats)} Sentinel-1 SAR flood polygons from recent radar scan ({dist_km:.1f} km away)")
 
-    extents = [5, 10, 25, 50]
-    tier_meta = [
-        {"name": "Tier 1: Hyper-Local Tactical Interventions", "scale": "5×5 km (Core Reach)", "auth": "Local Incident Command / Municipal Quick-Response Team", "urgency": "IMMEDIATE (0–3 Hours)"},
-        {"name": "Tier 2: Catchment-Level Resource Dispatch", "scale": "10×10 km (Catchment Basin)", "auth": "Sub-Divisional Disaster Management Unit", "urgency": "HIGH (3–12 Hours)"},
-        {"name": "Tier 3: District Logistical Coordination", "scale": "25×25 km (District Sub-basin)", "auth": "District Disaster Management Authority (DDMA)", "urgency": "MEDIUM (12–24 Hours)"},
-        {"name": "Tier 4: Macro-Basin Strategic Management", "scale": "50×50 km (Macro River Basin)", "auth": "State Disaster Management / NDRF Command Battalion", "urgency": "PROACTIVE (24–72 Hours)"}
-    ]
-
-    # Fetch live OSM amenities & infrastructure once for the catchment footprint (~20km)
-    # and spatially filter per tier to ensure instant, sub-second execution without repeated Overpass timeouts
-    catchment_geo = get_geodesic_stage_info(lat, lng, 20.0)
-    base_bbox = catchment_geo["bbox"]
     try:
-        osm_res = await asyncio.wait_for(
-            asyncio.to_thread(impact_assessor._fetch_live_osm, base_bbox),
-            timeout=3.5
+        plan = await asyncio.to_thread(
+            flood_action_engine.generate_action_plan,
+            lat=lat,
+            lng=lng,
+            radius_km=radius_km,
+            budget_usd=budget,
+            user_profile=user_profile,
+            time_horizon_hours=horizon,
+            sar_features=sar_feats
         )
+        return plan
     except Exception as e:
-        logger.info(f"OSM fetch for action plan timed out or fell back: {e}")
-        osm_res = (gpd.GeoDataFrame(geometry=[], crs="EPSG:4326"), gpd.GeoDataFrame(geometry=[], crs="EPSG:4326"), [], True, 0, gpd.GeoDataFrame(geometry=[], crs="EPSG:4326"))
-
-    all_infra_gdf = osm_res[1]
-    all_places = osm_res[2]
-    all_roads_gdf = osm_res[5] if len(osm_res) > 5 else gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
-
-    tiers = []
-    all_actions = []
-
-    for idx, km in enumerate(extents):
-        stage_geo = get_geodesic_stage_info(lat, lng, km)
-        bbox = stage_geo["bbox"]
-        meta = tier_meta[idx]
-
-        # Spatially filter infrastructure and roads within this tier's bbox
-        w, s, e, n = bbox
-        if not all_infra_gdf.empty:
-            i_bounds = all_infra_gdf.geometry.bounds
-            infra_gdf = all_infra_gdf[(i_bounds.maxx >= w) & (i_bounds.minx <= e) & 
-                                      (i_bounds.maxy >= s) & (i_bounds.miny <= n)]
-        else:
-            infra_gdf = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
-
-        if not all_roads_gdf.empty:
-            r_bounds = all_roads_gdf.geometry.bounds
-            roads_gdf = all_roads_gdf[(r_bounds.maxx >= w) & (r_bounds.minx <= e) & 
-                                      (r_bounds.maxy >= s) & (r_bounds.miny <= n)]
-        else:
-            roads_gdf = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
-
-        places = all_places
-
-        tier_actions = []
-        act_counter = 1
-
-        # 1. Real Healthcare / Medical Facility Protection
-        if not infra_gdf.empty:
-            health_facilities = infra_gdf[infra_gdf["infra_type"] == "healthcare"]
-            if not health_facilities.empty:
-                h = health_facilities.iloc[0]
-                h_geom = h.geometry
-                h_lat, h_lng = round(h_geom.y, 5), round(h_geom.x, 5)
-                h_name = str(h.get("name", "Local Health Center"))
-                tier_actions.append({
-                    "id": f"act-{idx+1}-{act_counter}",
-                    "title": f"Deploy Emergency Flood Barrier & Medical Continuity at {h_name}",
-                    "type": "medical_defense",
-                    "action_level": "EMERGENCY RESPONSE" if flow_ratio > 1.4 else "PREPARE",
-                    "desc": f"Position mobile aqua-barrier perimeter and dispatch backup emergency power to protect critical patient care at {h_name}.",
-                    "location_name": h_name,
-                    "lat": h_lat,
-                    "lng": h_lng,
-                    "reason": f"Direct protection of verified healthcare facility at elevation {elev}m.",
-                    "cost_usd": round(budget * (_risk_budget_pct(flow_ratio, 0.12)), 0),
-                    "priority": "P1",
-                    "urgency": meta["urgency"]
-                })
-                act_counter += 1
-
-        # 2. Real Power Substation Protection
-        if not infra_gdf.empty:
-            power_facilities = infra_gdf[infra_gdf["infra_type"] == "utilities"]
-            if not power_facilities.empty:
-                p = power_facilities.iloc[0]
-                p_geom = p.geometry
-                p_lat, p_lng = round(p_geom.y, 5), round(p_geom.x, 5)
-                p_name = str(p.get("name", "Regional Electrical Substation"))
-                tier_actions.append({
-                    "id": f"act-{idx+1}-{act_counter}",
-                    "title": f"Substation Auxiliary Power & Floodproofing at {p_name}",
-                    "type": "critical_infra",
-                    "action_level": "ALERT" if flow_ratio > 1.2 else "PREPARE",
-                    "desc": f"Activate auxiliary diesel generators and install sandbag berm around transformer switchgear at {p_name}.",
-                    "location_name": p_name,
-                    "lat": p_lat,
-                    "lng": p_lng,
-                    "reason": "Prevent electrical grid cascade failure and sustain pumping operations.",
-                    "cost_usd": round(budget * (_risk_budget_pct(flow_ratio, 0.15)), 0),
-                    "priority": "P2",
-                    "urgency": meta["urgency"]
-                })
-                act_counter += 1
-
-        # 3. Real Road Closure & Traffic Blockade
-        if not roads_gdf.empty:
-            r = roads_gdf.iloc[0]
-            r_geom = r.geometry
-            c = r_geom.centroid
-            r_lat, r_lng = round(c.y, 5), round(c.x, 5)
-            r_name = str(r.get("name", f"Highway Segment {r.get('highway', '').title()}"))
-            tier_actions.append({
-                "id": f"act-{idx+1}-{act_counter}",
-                "title": f"Traffic Blockade & Detour Checkpoint on {r_name}",
-                "type": "traffic_control",
-                "action_level": "ALERT" if flow_ratio > 1.3 else "MONITOR",
-                "desc": f"Erect illuminated barricades and police diversion checkpoints along {r_name} to prevent motorists entering low-lying overtopping zones.",
-                "location_name": r_name,
-                "lat": r_lat,
-                "lng": r_lng,
-                "reason": f"Roadway intersects riverine drainage corridor with flow ratio {flow_ratio:.1f}x.",
-                "cost_usd": round(budget * (_risk_budget_pct(flow_ratio, 0.05)), 0),
-                "priority": "P1" if flow_ratio > 1.4 else "P2",
-                "urgency": meta["urgency"]
-            })
-            act_counter += 1
-
-        # 4. Community Evacuation Reception Center (School / Public Hall outside flood core)
-        if not infra_gdf.empty:
-            edu_facilities = infra_gdf[infra_gdf["infra_type"] == "education"]
-            if not edu_facilities.empty:
-                e_fac = edu_facilities.iloc[0]
-                e_geom = e_fac.geometry
-                e_lat, e_lng = round(e_geom.y, 5), round(e_geom.x, 5)
-                e_name = str(e_fac.get("name", "Designated Community School"))
-                tier_actions.append({
-                    "id": f"act-{idx+1}-{act_counter}",
-                    "title": f"Primary Evacuation Reception Center Activation at {e_name}",
-                    "type": "evacuation_support",
-                    "action_level": "EVACUATION SUPPORT" if flow_ratio > 1.5 else "PREPARE",
-                    "desc": f"Activate shelter operations, pre-position potable water filtration, emergency rations, and cots at {e_name}.",
-                    "location_name": e_name,
-                    "lat": e_lat,
-                    "lng": e_lng,
-                    "reason": "Elevated public facility designated for community evacuation intake.",
-                    "cost_usd": round(budget * (_risk_budget_pct(flow_ratio, 0.08)), 0),
-                    "priority": "P2",
-                    "urgency": meta["urgency"]
-                })
-                act_counter += 1
-
-        # 5. Rural / Unmapped Reach Fallback: Genuine Reach Centroid (NO FAKE OFFSETS)
-        if len(tier_actions) == 0:
-            tier_actions.append({
-                "id": f"act-{idx+1}-1",
-                "title": f"Tactical Embankment UAV Survey & Levee Monitoring ({meta['scale']})",
-                "type": "monitoring_survey",
-                "action_level": "MONITOR" if flow_ratio < 1.2 else "ALERT",
-                "desc": f"Deploy drone aerial reconnaissance along riverbanks to inspect unmapped rural earthen levees at elevation {elev}m.",
-                "location_name": f"River Reach Centroid ({km}×{km} km)",
-                "lat": round(lat, 5),
-                "lng": round(lng, 5),
-                "reason": f"Rural agrarian river reach — no municipal amenities mapped in OSM. Active aerial surveillance protocol.",
-                "cost_usd": round(budget * (_risk_budget_pct(flow_ratio, 0.06)), 0),
-                "priority": "P2",
-                "urgency": meta["urgency"]
-            })
-            # NO synthetic dewatering pump staging — requires real infrastructure survey
-            tier_actions.append({
-                "id": f"act-{idx+1}-2",
-                "title": f"Infrastructure Survey Required for {meta['scale']} Resource Deployment",
-                "type": "assessment_required",
-                "action_level": "PREPARE",
-                "desc": "No verified facilities or infrastructure found in OSM for this tier. Cannot safely pre-position resources without ground truth. Contact local DDMA/NDRF for site assessment.",
-                "location_name": f"Assessment Required: {meta['scale']}",
-                "lat": round(lat, 5),
-                "lng": round(lng, 5),
-                "reason": "Zero OSM-mapped critical infrastructure, healthcare, education, or transport assets in this tier. Resource deployment requires local ground survey.",
-                "cost_usd": 0,
-                "priority": "P3",
-                "urgency": meta["urgency"]
-            })
-
-        tiers.append({
-            "tier_idx": idx,
-            "scale": meta["scale"],
-            "tier_name": meta["name"],
-            "authority": meta["auth"],
-            "urgency": meta["urgency"],
-            "actions": tier_actions
-        })
-
-        for a in tier_actions:
-            all_actions.append({**a, "tier": meta["name"], "scale": meta["scale"]})
-
-    allocated_resources = {
-        "budget_total_usd": budget,
-        "sandbags_polyweave": int(budget * 0.15 * 5),
-        "dewatering_pumps_units": max(2, int(budget / 25000)),
-        "rescue_zodiac_boats": max(2, int(budget / 18000)),
-        "emergency_food_water_kits": int(budget * 0.20 / 12),
-        "generator_backup_units": max(1, int(budget / 40000))
-    }
-
-    return {
-        "status": "success",
-        "coordinates": {"lat": lat, "lng": lng},
-        "budget_usd": budget,
-        "resource_allocation": allocated_resources,
-        "tiers": tiers,
-        "actions": all_actions,
-        "data_provenance": {
-            "hydrology_source": "Copernicus GloFAS 4.0 Operational River Discharge",
-            "meteorology_source": "ECMWF IFS 72h Rainfall Accumulation",
-            "elevation_source": "Copernicus 30m Global DEM",
-            "facilities_source": "OpenStreetMap Live Overpass (hospitals, substations, highways)",
-            "planning_standard": "FEMA NIMS / NDRF Incident Command Decision Support Framework"
-        }
-    }
+        logger.error(f"Error in FloodActionEngine execution: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate flood action plan: {str(e)}")
 
 # ─────────────────────────────────────────────
 # Endpoint 12: Incremental Progressive Stage Endpoint (Stage-by-Stage)

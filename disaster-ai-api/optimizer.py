@@ -76,7 +76,10 @@ class FloodAwareRouter:
             )
             
             # Add edge lengths if not present
-            G = ox.add_edge_lengths(G)
+            if hasattr(ox, "add_edge_lengths"):
+                G = ox.add_edge_lengths(G)
+            elif hasattr(ox, "distance") and hasattr(ox.distance, "add_edge_lengths"):
+                G = ox.distance.add_edge_lengths(G)
             
             # Add travel time estimates (assuming average speeds by highway type)
             self._add_travel_times(G)

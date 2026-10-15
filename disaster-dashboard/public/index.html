@@ -1102,6 +1102,234 @@
         .file-drop-icon { font-size: 22px; margin-bottom: 4px; }
         .file-drop-text { font-size: 11.5px; color: var(--text-1); }
         /* Action Plan Pins & Map Overlays */
+        .custom-source-divicon,
+        .custom-destination-divicon,
+        .custom-shelter-divicon,
+        .route-arrow-icon {
+            background: transparent !important;
+            border: none !important;
+        }
+
+        .source-pin-wrapper {
+            position: relative;
+            width: 44px;
+            height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+
+        .source-pulse-ring {
+            position: absolute;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: rgba(239, 68, 68, 0.45);
+            animation: origin-pulse 1.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) infinite;
+            pointer-events: none;
+        }
+
+        @keyframes origin-pulse {
+            0% { transform: scale(0.6); opacity: 0.95; }
+            50% { transform: scale(1.45); opacity: 0.35; }
+            100% { transform: scale(2.0); opacity: 0; }
+        }
+
+        .source-pulse-core {
+            position: relative;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #ef4444;
+            border: 2.5px solid #ffffff;
+            box-shadow: 0 0 16px rgba(239, 68, 68, 0.95), 0 3px 8px rgba(0,0,0,0.85);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+            z-index: 2;
+            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .source-pin-wrapper:hover .source-pulse-core {
+            transform: scale(1.22);
+            box-shadow: 0 0 22px rgba(239, 68, 68, 1), 0 4px 10px rgba(0,0,0,0.9);
+        }
+
+        .source-pin-label {
+            position: absolute;
+            bottom: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid #ef4444;
+            color: #fca5a5;
+            font-size: 9.5px;
+            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 3px;
+            white-space: nowrap;
+            letter-spacing: 0.3px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.8);
+            pointer-events: none;
+            z-index: 3;
+        }
+
+        .dest-pin-wrapper {
+            position: relative;
+            width: 42px;
+            height: 42px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+
+        .dest-pin-core {
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            border: 2.5px solid #ffffff;
+            box-shadow: 0 0 14px rgba(16, 185, 129, 0.75), 0 2px 6px rgba(0,0,0,0.85);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .dest-pin-wrapper:hover .dest-pin-core {
+            transform: scale(1.22) translateY(-2px);
+            box-shadow: 0 0 20px rgba(56, 189, 248, 0.95), 0 4px 10px rgba(0,0,0,0.9);
+        }
+
+        .dest-pin-label {
+            position: absolute;
+            top: -22px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid var(--border-base);
+            color: #f1f5f9;
+            font-size: 9.5px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 3px;
+            white-space: nowrap;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.8);
+            pointer-events: none;
+            z-index: 3;
+        }
+
+        .shelter-pin-marker {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+            box-shadow: 0 0 12px rgba(16, 185, 129, 0.6), 0 2px 6px rgba(0,0,0,0.8);
+            border: 2px solid #ffffff;
+            cursor: pointer;
+            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .shelter-pin-marker:hover {
+            transform: scale(1.22) translateY(-2px);
+            z-index: 1000 !important;
+        }
+        .route-card {
+            background: var(--bg-2);
+            border: 1px solid var(--border-base);
+            border-radius: var(--radius-sm);
+            padding: 12px;
+            margin-bottom: 10px;
+            transition: all 0.2s ease;
+        }
+        .route-card:hover {
+            border-color: var(--accent);
+            box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+        }
+        .route-card.highlighted {
+            border-color: #10b981;
+            box-shadow: 0 0 16px rgba(16, 185, 129, 0.45);
+            background: rgba(16, 185, 129, 0.08);
+        }
+        .route-status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .route-status-pill.clear {
+            background: rgba(16, 185, 129, 0.15);
+            color: #10b981;
+            border: 1px solid rgba(16, 185, 129, 0.4);
+        }
+        .route-status-pill.partial {
+            background: rgba(245, 158, 11, 0.15);
+            color: #f59e0b;
+            border: 1px solid rgba(245, 158, 11, 0.4);
+        }
+        .route-status-pill.flooded {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.4);
+        }
+        .route-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 6px;
+            margin: 8px 0;
+            background: var(--bg-1);
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid var(--border-base);
+        }
+        .route-stat-item {
+            font-size: 10.5px;
+            color: var(--text-1);
+        }
+        .route-stat-item b {
+            color: var(--text-0);
+        }
+        .headroom-bar-wrap {
+            height: 6px;
+            background: rgba(255,255,255,0.08);
+            border-radius: 3px;
+            overflow: hidden;
+            margin: 4px 0 6px 0;
+        }
+        .headroom-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #10b981, #06b6d4);
+            border-radius: 3px;
+            transition: width 0.4s ease;
+        }
+        .provenance-badges-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin: 8px 0;
+        }
+        .provenance-pill {
+            font-size: 9.5px;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 3px;
+            background: rgba(59, 130, 246, 0.1);
+            color: #60a5fa;
+            border: 1px solid rgba(59, 130, 246, 0.25);
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
         .custom-action-divicon {
             background: transparent;
             border: none;
@@ -2038,6 +2266,11 @@
                         <div style="color:var(--text-1);">• <b>Deep Learning Model:</b> EfficientNet-B3 U-Net (Sen1Floods11 benchmark)</div>
                         <div style="color:var(--text-1);">• <b>Terrain Filter:</b> HydroSHEDS permanent water mask + Copernicus 30m DEM slope cutoff (&gt;5% masked)</div>
                     </div>
+
+                    <!-- Direct Bridge to Evacuation Action Plan -->
+                    <button id="sarToActionBtn" class="btn btn-primary" onclick="launchActionPlanFromSar()" style="width:100%; margin-top:10px; font-weight:700; background:linear-gradient(135deg, #10b981 0%, #059669 100%); border:none; box-shadow:0 4px 12px rgba(16,185,129,0.35);">
+                        🎯 Generate Evacuation Action Plan Avoiding Flooded Zones
+                    </button>
                 </div>
             </section>
             <!-- Impact Assessment Multi-Scale Section -->
@@ -2202,8 +2435,8 @@
             </section>
             <!-- Action Plan Multi-Scale Section -->
             <section id="action-section" class="panel-section">
-                <div class="section-label">Incident Command & Budget Allocation</div>
-                <p class="hint">Hierarchical emergency dispatch & evacuation framework escalated across 4 operational spatial tiers (5×5 km tactical → 50×50 km strategic).</p>
+                <div class="section-label">Incident Command & Evacuation Directives</div>
+                <p class="hint">Genuine flood-aware evacuation routing & multi-tier operational dispatch. Integrates verified OSM shelters, Copernicus DEM elevation profiles, and flood-penalized Dijkstra corridors.</p>
 
                 <div class="coord-grid">
                     <input type="number" id="actionLat" class="field" placeholder="Lat" step="any">
@@ -2211,13 +2444,36 @@
                     <button class="btn btn-ghost" style="width:auto" onclick="syncActionCoordsFromMap()">Sync</button>
                 </div>
 
-                <div style="display:flex; gap:8px; margin-top:6px; align-items:center;">
-                    <label style="font-size:11px; color:var(--text-1); white-space:nowrap;">Command Budget:</label>
-                    <select id="actionBudgetSelect" class="field" style="flex:1;">
-                        <option value="50000">Limited Response ($50,000)</option>
-                        <option value="100000" selected>Standard District Deployment ($100,000)</option>
-                        <option value="200000">Extended Regional Command ($200,000)</option>
-                    </select>
+                <!-- Action Plan Configuration Grid -->
+                <div style="display:grid; grid-template-columns: 1fr; gap:6px; margin-top:8px;">
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <label style="font-size:11px; color:var(--text-1); width:105px; white-space:nowrap;">Command Budget:</label>
+                        <select id="actionBudgetSelect" class="field" style="flex:1;">
+                            <option value="50000">Limited Response ($50,000)</option>
+                            <option value="100000" selected>Standard District Deployment ($100,000)</option>
+                            <option value="200000">Extended Regional Command ($200,000)</option>
+                            <option value="500000">State Macro Command ($500,000)</option>
+                        </select>
+                    </div>
+
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <label style="font-size:11px; color:var(--text-1); width:105px; white-space:nowrap;">Routing Profile:</label>
+                        <select id="actionProfileSelect" class="field" style="flex:1;">
+                            <option value="vehicle" selected>🚗 Vehicle (Standard Drive Network)</option>
+                            <option value="pedestrian">🚶 Pedestrian (Walk Network / Paths)</option>
+                            <option value="high_clearance">🚜 High-Clearance (4×4 Rescue Vehicle)</option>
+                        </select>
+                    </div>
+
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <label style="font-size:11px; color:var(--text-1); width:105px; white-space:nowrap;">Forecast Horizon:</label>
+                        <select id="actionHorizonSelect" class="field" style="flex:1;">
+                            <option value="0" selected>⏱️ T+0h (Immediate Emergency Response)</option>
+                            <option value="6">⏱️ T+6h (Early Advisory Horizon)</option>
+                            <option value="12">⏱️ T+12h (Catchment Peak Flood Horizon)</option>
+                            <option value="24">⏱️ T+24h (Extended Multi-Day Horizon)</option>
+                        </select>
+                    </div>
                 </div>
 
                 <!-- Progressive Multi-Scale Stepper (5x5 -> 50x50 km) -->
@@ -2244,14 +2500,14 @@
                 </div>
 
                 <button id="actionMultiScaleBtn" class="btn btn-primary" style="margin-top:8px; width:100%;" onclick="runMultiScaleActionPlan()">
-                    🎯 Generate Multi-Scale Operational Action Plan (5×5 → 50×50 km)
+                    🎯 Generate Flood-Aware Multi-Scale Action Plan (5×5 → 50×50 km)
                 </button>
 
                 <div class="loader" id="action-loader">
                     <div class="spinner"></div>
-                    <div class="loader-text" id="action-loader-text">Synthesizing multi-tier incident command & resource dispatch…</div>
+                    <div class="loader-text" id="action-loader-text">Synthesizing flood-aware evacuation corridors & shelter dispatch…</div>
                 </div>
-                <div class="status-box" id="action-status">Ready. Select coordinates or click Generate Multi-Scale Operational Action Plan.</div>
+                <div class="status-box" id="action-status">Ready. Select coordinates or click Generate Flood-Aware Multi-Scale Action Plan.</div>
 
                 <!-- Multi-Scale Operational Action Cards & Resource Allocation -->
                 <div id="action-multiscale-results" style="display:none; margin-top:14px;">
@@ -2287,14 +2543,35 @@
                         </div>
                     </div>
 
-                    <!-- 4-Tier Operational Action Cards -->
+                    <!-- Elevation Profile Modal / Drawer -->
+                    <div id="action-elevation-panel" style="display:none; background:var(--bg-1); border:1px solid var(--accent); border-radius:var(--radius-sm); padding:10px; margin-top:12px; margin-bottom:12px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <span style="font-weight:700; color:var(--text-0); font-size:11.5px;" id="action-elevation-title">📈 Route Elevation Profile (Copernicus DEM 30m)</span>
+                            <button class="btn btn-ghost" style="padding:2px 6px; font-size:10px; height:auto;" onclick="closeElevationPanel()">✖ Close</button>
+                        </div>
+                        <canvas id="actionElevCanvas" width="460" height="150" style="width:100%; height:150px; background:rgba(0,0,0,0.3); border-radius:4px;"></canvas>
+                        <div id="action-elev-meta" style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-2); margin-top:6px; font-family:var(--font-mono);">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Verified Evacuation Corridors & Shelters -->
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; margin-bottom:6px;">
-                        <div class="section-label" style="margin-bottom:0;">Operational Escalation Protocol (4 Tiers)</div>
+                        <div class="section-label" style="margin-bottom:0;">Verified Evacuation Corridors & Shelters</div>
                         <button class="btn btn-ghost" style="padding: 2px 8px; font-size: 11px; height: auto;" onclick="fitAllActionPlanPins()">🗺️ Fit Map</button>
                     </div>
 
                     <div class="hint" style="font-size:10.5px; margin-bottom:8px;">
-                        💡 Click any tier card or pin below to fly Leaflet camera directly to the operational deployment site.
+                        🛣️ Flood-aware routes computed via OSM network Dijkstra routing with Copernicus DEM elevation ascent profiling.
+                    </div>
+
+                    <div id="action-destinations-container" style="display:flex; flex-direction:column; gap:10px;">
+                        <!-- Populated dynamically with rich route cards -->
+                    </div>
+
+                    <!-- 4-Tier Operational Action Cards -->
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; margin-bottom:6px;">
+                        <div class="section-label" style="margin-bottom:0;">Operational Escalation Protocol (4 Tiers)</div>
                     </div>
 
                     <div id="action-tiers-container" style="display:flex; flex-direction:column; gap:8px;">
@@ -2307,9 +2584,17 @@
                             <span>🎖️ Command Governance & Physical Realism</span>
                             <span style="color:#10b981;">✓ FEMA NIMS Standard</span>
                         </div>
-                        <div style="color:var(--text-1);">• <b>Hierarchy:</b> National Incident Management System (NIMS ICS-100 / 200)</div>
-                        <div style="color:var(--text-1);">• <b>Environmental Grounding:</b> Live GloFAS streamflow ratio + ECMWF rainfall + Copernicus 30m DEM slope</div>
-                        <div style="color:var(--text-1);">• <b>Georeferencing:</b> Every dispatch order carries authentic GPS coordinates for tactical field teams</div>
+                        <div class="provenance-badges-row">
+                            <span class="provenance-pill">🏛️ OpenStreetMap Live Facilities</span>
+                            <span class="provenance-pill">⛰️ Copernicus 30m Global DEM</span>
+                            <span class="provenance-pill">🌊 GloFAS 4.0 River Discharge</span>
+                            <span class="provenance-pill">🛣️ OSMnx Dijkstra Flood Router</span>
+                        </div>
+                        <div id="action-limitations-box" style="color:var(--text-2); font-size:10px; margin-top:6px; border-top:1px dashed var(--border-base); padding-top:6px;">
+                            • <b>Hierarchy:</b> National Incident Management System (NIMS ICS-100 / 200)<br>
+                            • <b>Environmental Grounding:</b> Live GloFAS streamflow ratio + ECMWF rainfall + Copernicus 30m DEM slope<br>
+                            • <b>Georeferencing:</b> Every dispatch order carries authentic GPS coordinates for tactical field teams
+                        </div>
                     </div>
                 </div>
             </section>
@@ -2703,8 +2988,16 @@ function switchTab(id) {
         } else if (id === 'action') {
             const latIn = document.getElementById('actionLat');
             const lngIn = document.getElementById('actionLng');
-            if (latIn) latIn.value = curLat.toFixed(4);
-            if (lngIn) lngIn.value = curLng.toFixed(4);
+            let effLat = curLat;
+            let effLng = curLng;
+            if ((effLat == null || effLng == null) && window.floodwatchSharedContext && window.floodwatchSharedContext.lat != null) {
+                effLat = window.floodwatchSharedContext.lat;
+                effLng = window.floodwatchSharedContext.lng;
+            }
+            if (effLat != null && effLng != null) {
+                if (latIn) latIn.value = effLat.toFixed(4);
+                if (lngIn) lngIn.value = effLng.toFixed(4);
+            }
         }
     }
     
@@ -2770,6 +3063,28 @@ function renderAIResponse(data, statusEl) {
 const sarMultiscaleLayers    = L.featureGroup().addTo(map);
 const impactMultiscaleLayers = L.featureGroup().addTo(map);
 const actionMultiscaleLayers = L.featureGroup().addTo(map);
+
+// Action Plan Dedicated Layer Groups directly attached to map (prevents layer detachment on clear)
+const actionPlanLayers = {
+    sourcePin: L.featureGroup().addTo(map),
+    shelters: L.featureGroup().addTo(map),
+    primaryRoutes: L.featureGroup().addTo(map),
+    alternativeRoutes: L.featureGroup().addTo(map),
+    directionArrows: L.featureGroup().addTo(map),
+    floodHazard: L.featureGroup().addTo(map),
+    uncertainSegments: L.featureGroup().addTo(map)
+};
+window.actionPlanLayers = actionPlanLayers;
+
+function clearActionPlanLayers() {
+    if (window.actionPlanLayers) {
+        Object.values(window.actionPlanLayers).forEach(layer => {
+            if (layer && typeof layer.clearLayers === 'function') {
+                layer.clearLayers();
+            }
+        });
+    }
+}
 
 let lastFloodData = null;  // Store last scan result for impact assessment
 function safeJson(obj) {
@@ -2962,7 +3277,28 @@ async function runMultiScaleSarScan() {
                 style: { color: '#ef4444', weight: 1.5, fillOpacity: 0.45, fillColor: '#ef4444' },
                 onEachFeature: (f, l) => {
                     const p = f.properties || {};
-                    l.bindPopup(`<b>Sentinel-1 SAR Verified Flood Zone</b><br>Area: <b>${p.area_km2 || '0.50'} km²</b><br>Sensor: Sentinel-1 C-band U-Net<br>Quality: 10m Georeferenced`);
+                    const areaText = p.area_km2 ? `${typeof p.area_km2 === 'number' ? p.area_km2.toFixed(2) : p.area_km2} km²` : 'Active Inundation Area';
+                    l.bindPopup(`
+                        <div style="font-family:inherit; min-width:210px;">
+                            <div style="display:flex; align-items:center; gap:6px; margin-bottom:5px;">
+                                <span style="font-size:16px;">🌊</span>
+                                <b style="color:#ef4444; font-size:12px;">Sentinel-1 SAR Flood Inundation</b>
+                            </div>
+                            <div style="font-size:11px; line-height:1.5; color:var(--text-1);">
+                                <div>Extent Area: <b>${areaText}</b></div>
+                                <div>Sensor: <b>Sentinel-1 C-band U-Net</b></div>
+                                <div>Hazard State: <b style="color:#ef4444;">ACTIVE INUNDATED SURFACE (RED ZONE)</b></div>
+                            </div>
+                            <button class="btn btn-primary" style="margin-top:8px; width:100%; padding:3px 8px; font-size:10px; height:auto;" onclick="evacuateFromSpecificFloodPoint(event)">
+                                🚨 Evacuate From This Flooded Area
+                            </button>
+                        </div>
+                    `);
+                    l.on('click', (e) => {
+                        if (e.latlng) {
+                            window.lastSelectedFloodCoord = [e.latlng.lat, e.latlng.lng];
+                        }
+                    });
                 }
             }).addTo(sarMultiscaleLayers);
         }
@@ -3272,10 +3608,278 @@ function syncActionCoordsFromMap() {
     toast(`Action plan coordinates synchronized to [${lat.toFixed(4)}, ${lng.toFixed(4)}]`, 'ok');
 }
 
+let actionRoutePolylines = [];
+let actionDestinationMarkers = [];
+let actionSourceMarker = null;
+
 function fitAllActionPlanPins() {
-    if (actionMultiscaleLayers.getLayers().length > 0) {
-        map.fitBounds(actionMultiscaleLayers.getBounds(), { padding: [50, 50], maxZoom: 13 });
+    let bounds = null;
+    const addBounds = (fg) => {
+        if (fg && typeof fg.getBounds === 'function') {
+            try {
+                const b = fg.getBounds();
+                if (b && b.isValid()) {
+                    bounds = bounds ? bounds.extend(b) : L.latLngBounds(b.getSouthWest(), b.getNorthEast());
+                }
+            } catch(e) {}
+        }
+    };
+    if (window.actionPlanLayers) {
+        addBounds(window.actionPlanLayers.sourcePin);
+        addBounds(window.actionPlanLayers.shelters);
+        addBounds(window.actionPlanLayers.primaryRoutes);
+        addBounds(window.actionPlanLayers.alternativeRoutes);
+        addBounds(window.actionPlanLayers.floodHazard);
     }
+    if (window.sarMultiscaleLayers && window.sarMultiscaleLayers.getLayers().length > 0) {
+        addBounds(window.sarMultiscaleLayers);
+    }
+    if (bounds && bounds.isValid()) {
+        map.fitBounds(bounds, { padding: [60, 60], maxZoom: 14 });
+    } else if (actionMultiscaleLayers && actionMultiscaleLayers.getLayers().length > 0) {
+        try {
+            const b = actionMultiscaleLayers.getBounds();
+            if (b && b.isValid()) map.fitBounds(b, { padding: [60, 60], maxZoom: 14 });
+        } catch(e) {}
+    }
+}
+
+let lastActionPlanData = null;
+let currentHighlightedLayer = null;
+
+function closeElevationPanel() {
+    const p = document.getElementById('action-elevation-panel');
+    if (p) p.style.display = 'none';
+}
+
+function showRouteElevationChart(destIdx) {
+    if (!lastActionPlanData || !lastActionPlanData.destinations || !lastActionPlanData.destinations[destIdx]) return;
+    const dest = lastActionPlanData.destinations[destIdx];
+    const pr = dest.primary_route;
+    const profile = pr.elevation_profile || [];
+
+    const panel = document.getElementById('action-elevation-panel');
+    const title = document.getElementById('action-elevation-title');
+    const meta = document.getElementById('action-elev-meta');
+    const canvas = document.getElementById('actionElevCanvas');
+
+    if (!panel || !canvas) return;
+    panel.style.display = 'block';
+    if (title) title.innerHTML = `📈 Elevation Profile: <b>${dest.name}</b> (+${pr.elevation_gain_m || 0}m gain, max ${pr.max_grade_pct || 0}% grade)`;
+
+    if (meta) {
+        meta.innerHTML = `
+            <span>Distance: <b>${pr.distance_km} km</b></span>
+            <span>Climb Gain: <b>+${pr.elevation_gain_m || 0} m</b></span>
+            <span>Max Grade: <b>${pr.max_grade_pct || 0}%</b></span>
+            <span>Safety: <b>${pr.safety_score}/100</b></span>
+        `;
+    }
+
+    drawElevationProfile(canvas, profile, pr);
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function drawElevationProfile(canvas, profile, routeData) {
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    if (!profile || profile.length < 2) {
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Elevation profile data synthesizing...', w / 2, h / 2);
+        return;
+    }
+
+    const elevs = profile.map(p => p.elevation_m);
+    const minElev = Math.min(...elevs) - 2;
+    const maxElev = Math.max(...elevs) + 5;
+    const elevRange = Math.max(10, maxElev - minElev);
+
+    const padL = 40, padR = 20, padT = 20, padB = 25;
+    const plotW = w - padL - padR;
+    const plotH = h - padT - padB;
+
+    // Draw grid lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 3; i++) {
+        const y = padT + (plotH * (i / 3));
+        const val = Math.round(maxElev - (elevRange * (i / 3)));
+        ctx.beginPath();
+        ctx.moveTo(padL, y);
+        ctx.lineTo(w - padR, y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#64748b';
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(`${val}m`, padL - 5, y + 3);
+    }
+
+    // Points
+    const pts = profile.map((p, i) => {
+        const x = padL + (plotW * (i / (profile.length - 1)));
+        const y = padT + plotH - ((p.elevation_m - minElev) / elevRange) * plotH;
+        return { x, y, isFlooded: p.is_flooded, elev: p.elevation_m, dist: p.distance_km };
+    });
+
+    // Fill under curve
+    const grad = ctx.createLinearGradient(0, padT, 0, h - padB);
+    grad.addColorStop(0, 'rgba(16, 185, 129, 0.45)');
+    grad.addColorStop(1, 'rgba(6, 182, 212, 0.05)');
+
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, h - padB);
+    pts.forEach(p => ctx.lineTo(p.x, p.y));
+    ctx.lineTo(pts[pts.length - 1].x, h - padB);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Draw main terrain line
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    pts.forEach(p => ctx.lineTo(p.x, p.y));
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    // Draw start and end markers
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath();
+    ctx.arc(pts[0].x, pts[0].y, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#10b981';
+    ctx.beginPath();
+    ctx.arc(pts[pts.length - 1].x, pts[pts.length - 1].y, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Labels
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '9.5px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Origin (${pts[0].elev.toFixed(0)}m)`, pts[0].x, h - 8);
+    ctx.textAlign = 'right';
+    ctx.fillText(`Shelter (${pts[pts.length - 1].elev.toFixed(0)}m)`, w - padR, h - 8);
+}
+
+function highlightDestinationOnMap(destIdx, isAlt = false, altIdx = 0) {
+    if (!lastActionPlanData || !lastActionPlanData.destinations || !lastActionPlanData.destinations[destIdx]) return;
+    const dest = lastActionPlanData.destinations[destIdx];
+    const r = isAlt ? (dest.alternatives && dest.alternatives[altIdx]) : dest.primary_route;
+    if (!r || !r.coordinates || r.coordinates.length === 0) return;
+
+    // Frame camera on the entire corridor: origin + route coordinates + destination
+    const latlngs = r.coordinates.map(c => [c[1], c[0]]);
+    const bounds = L.latLngBounds(latlngs);
+    if (lastActionPlanData.coordinates) {
+        bounds.extend([lastActionPlanData.coordinates.lat, lastActionPlanData.coordinates.lng]);
+    }
+    if (dest.location) {
+        bounds.extend([dest.location[0], dest.location[1]]);
+    }
+    map.fitBounds(bounds, { padding: [70, 70], maxZoom: 15 });
+
+    // Open destination marker popup
+    if (actionDestinationMarkers && actionDestinationMarkers[destIdx]) {
+        try {
+            actionDestinationMarkers[destIdx].openPopup();
+        } catch(e) {}
+    }
+
+    // Highlight card
+    document.querySelectorAll('.route-card').forEach(c => c.classList.remove('highlighted'));
+    const card = document.getElementById(`dest-card-${destIdx}`);
+    if (card) {
+        card.classList.add('highlighted');
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // Toast
+    toast(`Focusing corridor: ${dest.name} (${r.distance_km} km · ${r.status})`, 'ok');
+}
+
+function highlightOriginOnMap() {
+    if (!lastActionPlanData || !lastActionPlanData.coordinates) return;
+    const o = lastActionPlanData.coordinates;
+    map.flyTo([o.lat, o.lng], 14, { duration: 0.8 });
+    if (actionSourceMarker) {
+        setTimeout(() => actionSourceMarker.openPopup(), 850);
+    }
+}
+
+window.evacuateFromSpecificFloodPoint = function(e, directLat, directLng) {
+    if (e && e.stopPropagation) e.stopPropagation();
+    let lat = (directLat != null) ? directLat : null;
+    let lng = (directLng != null) ? directLng : null;
+    if (lat == null || lng == null) {
+        if (window.lastSelectedFloodCoord) {
+            lat = window.lastSelectedFloodCoord[0];
+            lng = window.lastSelectedFloodCoord[1];
+        } else if (selectedLat != null && selectedLng != null) {
+            lat = selectedLat;
+            lng = selectedLng;
+        }
+    }
+    if (lat != null && lng != null) {
+        switchTab('action');
+        const latIn = document.getElementById('actionLat');
+        const lngIn = document.getElementById('actionLng');
+        if (latIn) latIn.value = lat.toFixed(4);
+        if (lngIn) lngIn.value = lng.toFixed(4);
+        setTarget(lat, lng, true);
+        toast(`Evacuating directly from flood inundation sector: [${lat.toFixed(4)}, ${lng.toFixed(4)}]`, 'ok');
+        setTimeout(() => runMultiScaleActionPlan(), 300);
+    }
+};
+
+function launchActionPlanFromSar() {
+    switchTab('action');
+    let lat = null;
+    let lng = null;
+    if (window.lastSelectedFloodCoord) {
+        lat = window.lastSelectedFloodCoord[0];
+        lng = window.lastSelectedFloodCoord[1];
+    } else if (window.floodwatchSharedContext && window.floodwatchSharedContext.geojson && window.floodwatchSharedContext.geojson.features && window.floodwatchSharedContext.geojson.features.length > 0) {
+        for (const feat of window.floodwatchSharedContext.geojson.features) {
+            if (feat.geometry && feat.geometry.coordinates) {
+                const geom = feat.geometry;
+                if (geom.type === 'Polygon' && geom.coordinates[0] && geom.coordinates[0].length > 0) {
+                    lat = geom.coordinates[0][0][1];
+                    lng = geom.coordinates[0][0][0];
+                    break;
+                } else if (geom.type === 'MultiPolygon' && geom.coordinates[0] && geom.coordinates[0][0] && geom.coordinates[0][0].length > 0) {
+                    lat = geom.coordinates[0][0][0][1];
+                    lng = geom.coordinates[0][0][0][0];
+                    break;
+                }
+            }
+        }
+    }
+    if (lat == null || lng == null) {
+        if (window.floodwatchSharedContext && window.floodwatchSharedContext.lat != null) {
+            lat = window.floodwatchSharedContext.lat;
+            lng = window.floodwatchSharedContext.lng;
+        } else if (selectedLat != null && selectedLng != null) {
+            lat = selectedLat;
+            lng = selectedLng;
+        }
+    }
+    if (lat != null && lng != null) {
+        const latIn = document.getElementById('actionLat');
+        const lngIn = document.getElementById('actionLng');
+        if (latIn) latIn.value = lat.toFixed(4);
+        if (lngIn) lngIn.value = lng.toFixed(4);
+    }
+    toast('Routing evacuation directly from inundated flood area to safe high ground...', 'ok', 3000);
+    setTimeout(() => {
+        runMultiScaleActionPlan();
+    }, 350);
 }
 
 async function runMultiScaleActionPlan() {
@@ -3298,6 +3902,9 @@ async function runMultiScaleActionPlan() {
     setTarget(lat, lng, true);
 
     const budget = parseFloat(document.getElementById('actionBudgetSelect')?.value || '100000');
+    const user_profile = document.getElementById('actionProfileSelect')?.value || 'vehicle';
+    const time_horizon_hours = parseInt(document.getElementById('actionHorizonSelect')?.value || '0', 10);
+
     const btn = document.getElementById('actionMultiScaleBtn');
     const loader = document.getElementById('action-loader');
     const statusEl = document.getElementById('action-status');
@@ -3305,12 +3912,14 @@ async function runMultiScaleActionPlan() {
     const badge = document.getElementById('action-prog-badge');
     const pbar = document.getElementById('action-progress-bar');
     const resultsPanel = document.getElementById('action-multiscale-results');
+    const destContainer = document.getElementById('action-destinations-container');
     const tiersContainer = document.getElementById('action-tiers-container');
+    const limitationsBox = document.getElementById('action-limitations-box');
 
     if (btn) btn.disabled = true;
     if (loader) loader.classList.add('show');
-    if (badge) { badge.textContent = 'TIER 1/4'; badge.className = 'metric-status-pill warning'; }
-    if (statusEl) statusEl.textContent = 'Generating 4-tier operational incident command escalation plan...';
+    if (badge) { badge.textContent = 'ROUTING'; badge.className = 'metric-status-pill warning'; }
+    if (statusEl) statusEl.textContent = `Computing flood-aware evacuation routes (${user_profile}, T+${time_horizon_hours}h)...`;
 
     // Reset stage badges
     for (let i = 0; i < 4; i++) {
@@ -3321,22 +3930,37 @@ async function runMultiScaleActionPlan() {
         }
     }
     if (pbar) pbar.style.width = '25%';
-    if (statusBanner) statusBanner.textContent = 'Synthesizing Tier 1 (0–3h) hyper-local tactical interventions...';
+    if (statusBanner) statusBanner.textContent = 'Synthesizing OSM highway network, Copernicus DEM elevations, and flood penalties...';
+    if (destContainer) destContainer.innerHTML = '';
     if (tiersContainer) tiersContainer.innerHTML = '';
-    actionMultiscaleLayers.clearLayers();
+
+    // Clear previous action plan layers cleanly without detaching layer groups
+    clearActionPlanLayers();
+    closeElevationPanel();
+    actionRoutePolylines = [];
+    actionDestinationMarkers = [];
 
     try {
+        let sar_features = null;
+        if (window.floodwatchSharedContext && window.floodwatchSharedContext.geojson && Array.isArray(window.floodwatchSharedContext.geojson.features)) {
+            sar_features = window.floodwatchSharedContext.geojson.features;
+        }
+
         const res = await fetch('/api/action/multiscale', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lat, lng, budget })
+            body: JSON.stringify({
+                lat, lng, budget, user_profile, time_horizon_hours,
+                sar_features: sar_features
+            })
         });
         const data = await res.json();
         if (data.error) throw new Error(data.error);
 
+        lastActionPlanData = data;
         if (resultsPanel) resultsPanel.style.display = 'block';
 
-        // Populate resource allocation
+        // 1. Populate resource allocation
         const alloc = data.resource_allocation || {};
         document.getElementById('action-budget-tag').textContent = `$${(data.budget_usd || budget).toLocaleString()} Total`;
         document.getElementById('res-sandbags').textContent = (alloc.sandbags_polyweave || 0).toLocaleString();
@@ -3345,11 +3969,309 @@ async function runMultiScaleActionPlan() {
         document.getElementById('res-kits').textContent = (alloc.emergency_food_water_kits || 0).toLocaleString();
         document.getElementById('res-generators').textContent = (alloc.generator_backup_units || 0).toLocaleString();
 
+        // 2. Render GeoJSON Hazard on Map
+        const geojson = data.geojson || { features: [] };
+        const features = geojson.features || [];
+
+        // Hazard polygons
+        features.filter(f => f.geometry && (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon')).forEach(h => {
+            L.geoJSON(h, {
+                style: {
+                    color: h.properties.stroke_color || '#ef4444',
+                    fillColor: h.properties.fill_color || '#ef4444',
+                    fillOpacity: h.properties.fill_opacity || 0.28,
+                    weight: 2
+                }
+            }).bindPopup(`
+                <b>🌊 ${h.properties.zone_type || 'Flood Hazard Extent'}</b><br>
+                Severity: <b>${h.properties.severity || 'Critical'}</b><br>
+                ${h.properties.description || ''}
+            `).addTo(actionPlanLayers.floodHazard);
+        });
+
+        // 2b. Render Evacuation Origin / Source Pin (Flooded Area)
+        const destinations = data.destinations || [];
+        const originLat = (data.coordinates && data.coordinates.lat != null) ? data.coordinates.lat : lat;
+        const originLng = (data.coordinates && data.coordinates.lng != null) ? data.coordinates.lng : lng;
+
+        // Update coordinate input fields so operator sees exact flooded origin
+        if (latIn) latIn.value = originLat.toFixed(4);
+        if (lngIn) lngIn.value = originLng.toFixed(4);
+
+        const originElevStr = (destinations.length > 0 && destinations[0].primary_route && destinations[0].primary_route.elevation_profile && destinations[0].primary_route.elevation_profile.length > 0)
+            ? `${destinations[0].primary_route.elevation_profile[0].elevation_m.toFixed(0)}m ASL`
+            : 'Flood Inundation Level';
+
+        const sourceIcon = L.divIcon({
+            className: 'custom-source-divicon',
+            html: `
+                <div class="source-pin-wrapper">
+                    <div class="source-pulse-ring"></div>
+                    <div class="source-pulse-core">
+                        <span>🚨</span>
+                    </div>
+                    <div class="source-pin-label">ORIGIN (FLOOD ZONE)</div>
+                </div>
+            `,
+            iconSize: [44, 44],
+            iconAnchor: [22, 22]
+        });
+
+        const floodOrigin = data.flood_origin || {};
+        const sectorName = floodOrigin.zone_name || 'Active Inundation Sector';
+        const areaStr = floodOrigin.area_km2 ? `${floodOrigin.area_km2.toFixed(2)} km² Inundated Area` : 'Flood Hazard Extent';
+
+        actionSourceMarker = L.marker([originLat, originLng], { icon: sourceIcon, zIndexOffset: 2500 }).addTo(actionPlanLayers.sourcePin);
+        actionSourceMarker.bindPopup(`
+            <div style="font-family:inherit; min-width:240px;">
+                <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+                    <span style="font-size:16px;">🚨</span>
+                    <b style="color:#ef4444; font-size:12px;">EVACUATION ORIGIN (FLOOD ZONE)</b>
+                </div>
+                <div style="font-size:11px; line-height:1.55; color:var(--text-1);">
+                    <div>Sector: <b style="color:var(--text-0);">${sectorName}</b></div>
+                    <div>Location: <b>${originLat.toFixed(5)}° N, ${originLng.toFixed(5)}° E</b></div>
+                    <div>Origin Elevation: <b>${originElevStr}</b></div>
+                    <div>Hazard Status: <b style="color:#ef4444;">ACTIVE INUNDATION AREA (${areaStr})</b></div>
+                    <div>Source Data: <b>Sentinel-1 SAR Radar / Copernicus DEM</b></div>
+                    <div style="margin-top:6px; font-size:10px; color:var(--text-2);">Follow green safe escape lines away from red flood areas to reach safe high grounds.</div>
+                </div>
+            </div>
+        `);
+
+        // Render Flood Origin Overview Card at top of destinations list
+        const originCard = document.createElement('div');
+        originCard.style.background = 'linear-gradient(135deg, rgba(239,68,68,0.14) 0%, rgba(15,23,42,0.6) 100%)';
+        originCard.style.border = '1px solid rgba(239, 68, 68, 0.45)';
+        originCard.style.borderRadius = 'var(--radius-sm)';
+        originCard.style.padding = '10px 12px';
+        originCard.style.marginBottom = '12px';
+
+        let sectorChipsHtml = '';
+        if (Array.isArray(data.all_flood_origins) && data.all_flood_origins.length > 1) {
+            sectorChipsHtml = `
+                <div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(239, 68, 68, 0.35);">
+                    <div style="font-size:10px; color:var(--text-2); margin-bottom:4px; font-weight:700;">SWITCH FLOODED SECTOR:</div>
+                    <div style="display:flex; flex-wrap:wrap; gap:4px;">
+                        ${data.all_flood_origins.map((fo, idx) => `
+                            <button class="btn btn-ghost" style="padding:2px 7px; font-size:9.5px; height:auto; border:1px solid ${idx===0 ? '#ef4444' : 'var(--border-base)'}; color:${idx===0 ? '#fca5a5' : 'var(--text-1)'};" onclick="window.evacuateFromSpecificFloodPoint(null, ${fo.location[0]}, ${fo.location[1]})">
+                                ${fo.name}
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        originCard.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div style="display:flex; align-items:center; gap:6px;">
+                    <span style="font-size:16px;">🚨</span>
+                    <span style="font-weight:700; color:#fca5a5; font-size:12px;">EVACUATION ORIGIN (RED FLOOD ZONE)</span>
+                </div>
+                <button class="btn btn-ghost" style="padding:2px 8px; font-size:10px; height:auto; color:#ef4444; border:1px solid rgba(239,68,68,0.4);" onclick="highlightOriginOnMap()">📍 View Pin</button>
+            </div>
+            <div style="margin-top:5px; font-size:11px; line-height:1.5; color:var(--text-1);">
+                <div>Sector: <b style="color:var(--text-0);">${sectorName}</b></div>
+                <div>Coordinates: <b style="font-family:var(--font-mono);">${originLat.toFixed(5)}° N, ${originLng.toFixed(5)}° E</b> · Elevation: <b>${originElevStr}</b></div>
+                <div style="font-size:10px; color:var(--text-2); margin-top:2px;">Routes begin directly within the inundated water surface and navigate out along clear high-ground escape paths.</div>
+            </div>
+            ${sectorChipsHtml}
+        `;
+        destContainer.appendChild(originCard);
+
+        // Destination routes & shelters
+        destinations.forEach((dest, dIdx) => {
+            const isVerified = dest.verified;
+            const pr = dest.primary_route;
+
+            // Render Primary Route Polyline
+            if (pr && pr.coordinates && pr.coordinates.length > 0) {
+                const latlngs = pr.coordinates.map(c => [c[1], c[0]]);
+                const strokeColor = pr.status.includes('CLEAR') ? '#10b981' : (pr.status.includes('PARTIAL') ? '#f59e0b' : '#ef4444');
+                
+                // Dark contrast casing
+                L.polyline(latlngs, {
+                    color: '#020617',
+                    weight: 9,
+                    opacity: 0.9,
+                    lineJoin: 'round',
+                    lineCap: 'round'
+                }).addTo(actionPlanLayers.primaryRoutes);
+
+                const poly = L.polyline(latlngs, {
+                    color: strokeColor,
+                    weight: 5.5,
+                    opacity: 1.0,
+                    lineJoin: 'round',
+                    lineCap: 'round'
+                }).addTo(actionPlanLayers.primaryRoutes);
+
+                actionRoutePolylines[dIdx] = poly;
+
+                poly.bindPopup(`
+                    <div style="font-family:inherit; min-width:220px;">
+                        <div style="display:flex; align-items:center; gap:6px; margin-bottom:5px;">
+                            <span style="font-size:16px;">🛣️</span>
+                            <b style="color:${strokeColor}; font-size:12px;">Primary Evacuation Route</b>
+                        </div>
+                        <div style="font-size:11px; line-height:1.5;">
+                            <div>Destination: <b>${dest.name}</b></div>
+                            <div>Condition: <b style="color:${strokeColor}">${pr.status}</b></div>
+                            <div>Distance: <b>${pr.distance_km} km</b> · ETA: <b>${pr.travel_time_min} min</b></div>
+                            <div>Elevation Gain: <b>+${pr.elevation_gain_m || 0}m</b> (Max Grade: ${pr.max_grade_pct || 0}%)</div>
+                            <div>Safety Score: <b>${pr.safety_score}/100</b></div>
+                        </div>
+                        <div style="margin-top:6px;">
+                            <button class="btn btn-ghost" style="width:100%; padding:2px 6px; font-size:10px; height:auto;" onclick="highlightDestinationOnMap(${dIdx})">🎯 Focus Corridor</button>
+                        </div>
+                    </div>
+                `);
+
+                // Directional Arrow at midpoint pointing towards safety
+                if (latlngs.length >= 2) {
+                    const midIdx = Math.floor(latlngs.length / 2);
+                    const p1 = latlngs[Math.max(0, midIdx - 1)];
+                    const p2 = latlngs[midIdx];
+                    const angle = Math.atan2(p2[0] - p1[0], p2[1] - p1[1]) * 180 / Math.PI;
+                    
+                    const arrowIcon = L.divIcon({
+                        className: 'route-arrow-icon',
+                        html: `<div style="transform: rotate(${90 - angle}deg); color:${strokeColor}; font-size:16px; text-shadow: 0 0 5px #000, 0 0 8px #000; font-weight:bold;">➤</div>`,
+                        iconSize: [20, 20],
+                        iconAnchor: [10, 10]
+                    });
+                    L.marker(p2, { icon: arrowIcon, interactive: false, zIndexOffset: 1200 }).addTo(actionPlanLayers.directionArrows);
+                }
+            }
+
+            // Render Alternative Routes
+            (dest.alternatives || []).forEach(alt => {
+                if (alt.coordinates && alt.coordinates.length > 0) {
+                    const altLatlngs = alt.coordinates.map(c => [c[1], c[0]]);
+                    const altPoly = L.polyline(altLatlngs, {
+                        color: '#f59e0b',
+                        weight: 3.5,
+                        dashArray: '6, 8',
+                        opacity: 0.85
+                    }).addTo(actionPlanLayers.alternativeRoutes);
+
+                    altPoly.bindPopup(`
+                        <b>🔀 Alternative Route</b><br>
+                        Destination: <b>${dest.name}</b><br>
+                        Status: <b>${alt.status}</b><br>
+                        Distance: <b>${alt.distance_km} km</b> | ETA: <b>${alt.travel_time_min} min</b><br>
+                        Safety Score: <b>${alt.safety_score}/100</b>
+                    `);
+                }
+            });
+
+            // Render Destination Marker (Safe High Ground / Verified Facility)
+            const sLoc = dest.location;
+            const markerBg = isVerified ? '#10b981' : '#0284c7';
+            const markerIconChar = isVerified ? (dest.type && dest.type.includes('hospital') ? '🏥' : '🏫') : '⛰️';
+            const elevBadge = (pr && pr.elevation_gain_m) ? `+${Math.round(pr.elevation_gain_m)}m` : (dest.elevation_asl_m ? `${Math.round(dest.elevation_asl_m)}m ASL` : 'SAFE');
+            const destShortName = dest.name.split('(')[0].trim();
+
+            const sIcon = L.divIcon({
+                className: 'custom-destination-divicon',
+                html: `
+                    <div class="dest-pin-wrapper">
+                        <div class="dest-pin-core" style="background:${markerBg};">
+                            <span>${markerIconChar}</span>
+                        </div>
+                        <div class="dest-pin-label">${destShortName} · <span style="color:#38bdf8;">${elevBadge}</span></div>
+                    </div>
+                `,
+                iconSize: [42, 42],
+                iconAnchor: [21, 21]
+            });
+            const sm = L.marker([sLoc[0], sLoc[1]], { icon: sIcon, zIndexOffset: 1800 }).addTo(actionPlanLayers.shelters);
+            actionDestinationMarkers[dIdx] = sm;
+            sm.bindPopup(`
+                <div style="font-family:inherit; min-width:240px;">
+                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+                        <span style="font-size:18px;">${markerIconChar}</span>
+                        <b style="color:${markerBg}; font-size:12.5px;">${dest.name}</b>
+                    </div>
+                    <div style="font-size:11px; line-height:1.55; color:var(--text-1);">
+                        <div>Classification: <b>${isVerified ? 'VERIFIED CIVIC SHELTER' : 'COPERNICUS DEM HIGH GROUND'}</b></div>
+                        <div>Coordinates: <b>${sLoc[0].toFixed(5)}° N, ${sLoc[1].toFixed(5)}° E</b></div>
+                        <div>Safety Score: <b style="color:#10b981;">${dest.ranking_score}/100</b></div>
+                        <div>Target Elevation: <b>${dest.elevation_asl_m || 0}m ASL (+${pr.elevation_gain_m || 0}m climb)</b></div>
+                        <div>Capacity: <b>${dest.allocated_evacuees || 0}/${dest.capacity} evacuees</b> (${dest.headroom_pct}% Headroom)</div>
+                        <div>Distance from Flood: <b>${pr.distance_km} km</b> (ETA: <b>${pr.travel_time_min} min</b>)</div>
+                        <div>Escape Corridor: <b style="color:${pr.status.includes('CLEAR') ? '#10b981' : '#f59e0b'};">${pr.status}</b></div>
+                    </div>
+                    <div style="margin-top:8px; display:flex; gap:6px;">
+                        <button class="btn btn-ghost" style="flex:1; padding:3px 6px; font-size:10px; height:auto;" onclick="showRouteElevationChart(${dIdx})">📈 Elevation Profile</button>
+                        <button class="btn btn-primary" style="flex:1; padding:3px 6px; font-size:10px; height:auto;" onclick="highlightDestinationOnMap(${dIdx})">🎯 Focus Corridor</button>
+                    </div>
+                </div>
+            `);
+
+            // 3. Build Destination Card HTML
+            const card = document.createElement('div');
+            card.className = 'route-card';
+            card.id = `dest-card-${dIdx}`;
+
+            const statusClass = pr.status.includes('CLEAR') ? 'clear' : (pr.status.includes('PARTIAL') ? 'partial' : 'flooded');
+            const statusIcon = pr.status.includes('CLEAR') ? '✅' : (pr.status.includes('PARTIAL') ? '⚠️' : '🚨');
+
+            let altsHtml = '';
+            (dest.alternatives || []).forEach((alt, aIdx) => {
+                altsHtml += `
+                    <div style="background:var(--bg-1); border:1px dashed var(--border-base); border-radius:4px; padding:6px 8px; margin-top:5px; font-size:10.5px; display:flex; justify-content:space-between; align-items:center;">
+                        <span>🔀 <b>Alt ${aIdx+1}:</b> ${alt.distance_km} km · ETA ${alt.travel_time_min}m (${alt.status})</span>
+                        <button class="btn btn-ghost" style="padding:1px 6px; font-size:9.5px; height:auto;" onclick="highlightDestinationOnMap(${dIdx}, true, ${aIdx})">View</button>
+                    </div>
+                `;
+            });
+
+            card.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px;">
+                    <div>
+                        <div style="font-weight:700; color:var(--text-0); font-size:12px; display:flex; align-items:center; gap:5px;">
+                            <span>${markerIconChar}</span>
+                            <span>${dest.name}</span>
+                        </div>
+                        <div style="font-size:10px; color:${isVerified ? '#10b981' : '#38bdf8'}; font-weight:600; margin-top:2px;">
+                            ${isVerified ? '✓ VERIFIED OSM SHELTER' : '⛰️ COPERNICUS DEM HIGH GROUND'}
+                        </div>
+                    </div>
+                    <span class="route-status-pill ${statusClass}">${statusIcon} ${pr.status.split('-')[0].trim()}</span>
+                </div>
+
+                <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-2); margin-top:4px;">
+                    <span>Capacity: <b>${dest.allocated_evacuees || 0}/${dest.capacity}</b> (${dest.headroom_pct}% Headroom)</span>
+                    <span style="color:#10b981; font-weight:700;">Score: ${dest.ranking_score}/100</span>
+                </div>
+                <div class="headroom-bar-wrap">
+                    <div class="headroom-bar-fill" style="width:${Math.max(15, dest.headroom_pct)}%;"></div>
+                </div>
+
+                <div class="route-stats-grid">
+                    <div class="route-stat-item">📏 Distance: <b>${pr.distance_km} km</b></div>
+                    <div class="route-stat-item">⏱️ Drive/Walk ETA: <b>${pr.travel_time_min} min</b></div>
+                    <div class="route-stat-item">📈 Elevation: <b>+${pr.elevation_gain_m || 0}m gain</b></div>
+                    <div class="route-stat-item">🛡️ Max Grade: <b>${pr.max_grade_pct || 0}% slope</b></div>
+                </div>
+
+                <div style="display:flex; gap:6px; margin-top:8px;">
+                    <button class="btn btn-ghost" style="flex:1; padding:3px 8px; font-size:10.5px; height:auto;" onclick="highlightDestinationOnMap(${dIdx})">📍 View on Map</button>
+                    <button class="btn btn-ghost" style="flex:1; padding:3px 8px; font-size:10.5px; height:auto;" onclick="showRouteElevationChart(${dIdx})">📈 Elevation Profile</button>
+                </div>
+
+                ${altsHtml}
+            `;
+            destContainer.appendChild(card);
+        });
+
+        // 4. Render 4 Operational Escalation Tiers
         const tiers = data.tiers || [];
         const tierColors = ['#ef4444', '#f97316', '#3b82f6', '#8b5cf6'];
         const tierIcons = ['🚨', '🚤', '🛣️', '🛰️'];
 
-        // PROGRESSIVE TIER-BY-TIER ESCALATION
         for (let tIdx = 0; tIdx < tiers.length; tIdx++) {
             const t = tiers[tIdx];
 
@@ -3362,78 +4284,47 @@ async function runMultiScaleActionPlan() {
                     else { b.classList.remove('active', 'completed'); }
                 }
             }
-            if (badge) {
-                badge.textContent = tIdx === tiers.length - 1 ? 'DEPLOYED' : `TIER ${tIdx + 1}/4`;
-                badge.className = tIdx === tiers.length - 1 ? 'metric-status-pill available' : 'metric-status-pill warning';
-            }
 
-            if (statusBanner) {
-                statusBanner.textContent = `Escalating to ${t.tier_name} (${t.scale}) — ${t.urgency}...`;
-            }
-
-            // Create tier card
-            const card = document.createElement('div');
-            card.style.background = 'var(--bg-2)';
-            card.style.border = `1px solid ${tierColors[tIdx] || 'var(--border-base)'}`;
-            card.style.borderRadius = 'var(--radius-sm)';
-            card.style.padding = '10px';
-            card.style.marginBottom = '10px';
-            card.style.position = 'relative';
+            const tierCard = document.createElement('div');
+            tierCard.style.background = 'var(--bg-2)';
+            tierCard.style.border = `1px solid ${tierColors[tIdx] || 'var(--border-base)'}`;
+            tierCard.style.borderRadius = 'var(--radius-sm)';
+            tierCard.style.padding = '10px';
+            tierCard.style.marginBottom = '8px';
 
             let actionsHtml = '';
             (t.actions || []).forEach(a => {
                 actionsHtml += `
-                    <div style="background:var(--bg-1); border:1px solid var(--border-base); border-radius:4px; padding:8px; margin-top:6px;">
+                    <div style="background:var(--bg-1); border:1px solid var(--border-base); border-radius:4px; padding:7px; margin-top:5px;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-weight:700; color:var(--text-0); font-size:11.5px;">${a.title}</span>
+                            <span style="font-weight:700; color:var(--text-0); font-size:11px;">${a.title}</span>
                             <span class="chip" style="background:${tierColors[tIdx]}22; color:${tierColors[tIdx]}; border:1px solid ${tierColors[tIdx]}55; font-size:9.5px; font-weight:700;">${a.priority} · $${Math.round(a.cost_usd || 0).toLocaleString()}</span>
                         </div>
-                        <div style="color:var(--text-1); font-size:10.5px; margin-top:3px; line-height:1.4;">${a.desc}</div>
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:5px;">
-                            <span style="color:var(--text-2); font-size:10px; font-family:var(--font-mono);">GPS: [${a.lat.toFixed(4)}, ${a.lng.toFixed(4)}] · ${a.location_name}</span>
-                            <button class="btn btn-ghost" style="padding:2px 8px; font-size:10px; height:auto;" onclick="map.flyTo([${a.lat}, ${a.lng}], 14, {duration: 0.8})">📍 View on Map</button>
-                        </div>
+                        <div style="color:var(--text-1); font-size:10px; margin-top:3px; line-height:1.4;">${a.desc}</div>
                     </div>
                 `;
-
-                // Add map marker for this action
-                const m = L.circleMarker([a.lat, a.lng], {
-                    radius: 7,
-                    color: tierColors[tIdx],
-                    weight: 2,
-                    fillColor: tierColors[tIdx],
-                    fillOpacity: 0.8
-                }).addTo(actionMultiscaleLayers);
-
-                m.bindPopup(`
-                    <b>${tierIcons[tIdx] || '📍'} ${a.title}</b><br>
-                    Tier: <b>${t.tier_name}</b> (${t.scale})<br>
-                    Authority: <b>${t.authority}</b><br>
-                    Target Location: <b>${a.location_name}</b><br>
-                    Action Urgency: <b>${a.urgency}</b><br>
-                    Operational Justification: <i>${a.reason}</i><br>
-                    Allocated Budget: <b>$${Math.round(a.cost_usd || 0).toLocaleString()}</b>
-                `);
             });
 
-            card.innerHTML = `
-                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-base); padding-bottom:5px;">
-                    <span style="font-weight:700; color:${tierColors[tIdx]}; font-size:12px;">${tierIcons[tIdx]} ${t.tier_name}</span>
+            tierCard.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-base); padding-bottom:4px;">
+                    <span style="font-weight:700; color:${tierColors[tIdx]}; font-size:11.5px;">${tierIcons[tIdx]} ${t.tier_name}</span>
                     <span style="font-size:10px; color:var(--text-1); font-weight:600;">${t.scale}</span>
                 </div>
-                <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-2); margin-top:4px;">
-                    <span>Authority: <b style="color:var(--text-1);">${t.authority}</b></span>
-                    <span style="color:${tierColors[tIdx]}; font-weight:700;">${t.urgency}</span>
-                </div>
-                <div style="margin-top:6px;">${actionsHtml}</div>
+                <div style="margin-top:5px;">${actionsHtml}</div>
             `;
-            tiersContainer.appendChild(card);
-
-            if (tIdx < tiers.length - 1) {
-                await sleep(400);
-            }
+            tiersContainer.appendChild(tierCard);
         }
 
+        // 5. Populate limitations & audit
+        if (limitationsBox && data.limitations) {
+            let limHtml = '<b>Operational Limitations:</b><br>';
+            data.limitations.forEach(l => {
+                limHtml += `• ${l}<br>`;
+            });
+            limitationsBox.innerHTML = limHtml;
+        }
+
+        // Fit map bounds
         fitAllActionPlanPins();
 
         for (let i = 0; i < 4; i++) {
@@ -3441,9 +4332,9 @@ async function runMultiScaleActionPlan() {
             if (b) { b.classList.remove('active'); b.classList.add('completed'); }
         }
         if (badge) { badge.textContent = 'DEPLOYED'; badge.className = 'metric-status-pill available'; }
-        if (statusBanner) statusBanner.textContent = `✅ Operational incident command escalation active across all 4 spatial tiers.`;
-        if (statusEl) statusEl.textContent = '✅ Action plan generated and verified.';
-        toast(`Multi-Scale Action Plan generated across all 4 operational tiers!`, 'ok');
+        if (statusBanner) statusBanner.textContent = `✅ Flood-aware evacuation routes active for ${destinations.length} verified safe destinations.`;
+        if (statusEl) statusEl.textContent = `✅ Action plan ready: ${destinations.length} verified routes computed with elevation profiles.`;
+        toast(`Flood-Aware Action Plan generated: ${destinations.length} verified corridors ready!`, 'ok');
 
     } catch (err) {
         if (statusEl) statusEl.textContent = '❌ Error: ' + err.message;
@@ -4873,6 +5764,7 @@ function clearHydrologyLayers() {
     const results = document.getElementById('hydro-results');
     if (results) results.style.display = 'none';
     toast('Cleared river gauges from map.', 'info', 1600);
+}
 // Initialize prediction layers on map
 if (typeof initPredictLayers === 'function') {
     initPredictLayers();

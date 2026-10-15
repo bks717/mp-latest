@@ -11,6 +11,10 @@ const DB_NAME = 'floodwatch';
 const COLLECTION_NAME = 'predictions';
 const GLOBAL_COLLECTION_NAME = 'global_predictions';
 const VERIFICATIONS_COLLECTION_NAME = 'forecast_verifications';
+const ACTION_PLANS_COLLECTION_NAME = 'action_plans';
+
+let actionPlansCol = null;
+const actionPlanMemoryFallback = [];
 
 let client = null;
 let db = null;
@@ -37,6 +41,9 @@ async function initMongo() {
         predictionsCol = db.collection(COLLECTION_NAME);
         globalPredictionsCol = db.collection(GLOBAL_COLLECTION_NAME);
         verificationsCol = db.collection(VERIFICATIONS_COLLECTION_NAME);
+        actionPlansCol = db.collection(ACTION_PLANS_COLLECTION_NAME);
+        await actionPlansCol.createIndex({ timestamp: -1 });
+        await actionPlansCol.createIndex({ 'coordinates.lat': 1, 'coordinates.lng': 1 });
 
         // Create indexes for efficient querying
         await predictionsCol.createIndex({ timestamp: -1 });
@@ -490,7 +497,61 @@ function roundNum(n, d) {
     return Math.round(n * factor) / factor;
 }
 
+
+/**
+ * Saves a flood evacuation action plan document
+ */
+async function saveActionPlan(doc) {
+    const timestamp = doc.timestamp ? new Date(doc.timestamp) : new Date();
+    const record = {
+        ...doc,
+        timestamp,
+        created_at: new Date()
+    };
+
+    if (isConnected && actionPlansCol) {
+        try {
+            const result = await actionPlansCol.insertOne(record);
+            return { ...record, _id: result.insertedId };
+        } catch (err) {
+            console.error('Failed to insert action plan in MongoDB:', err.message);
+        }
+    }
+
+    const fallbackRecord = { ...record, _id: new ObjectId() };
+    actionPlanMemoryFallback.unshift(fallbackRecord);
+    if (actionPlanMemoryFallback.length > 50) actionPlanMemoryFallback.pop();
+    return fallbackRecord;
+}
+
+/**
+ * Retrieves action plan history
+ */
+async function getActionPlanHistory(query = {}) {
+    const { lat, lng, limit = 10 } = query;
+    const filter = {};
+
+    if (lat != null && lng != null) {
+        const numLat = parseFloat(lat);
+        const numLng = parseFloat(lng);
+        filter['coordinates.lat'] = { $gte: numLat - 0.25, $lte: numLat + 0.25 };
+        filter['coordinates.lng'] = { $gte: numLng - 0.25, $lte: numLng + 0.25 };
+    }
+
+    if (isConnected && actionPlansCol) {
+        try {
+            return await actionPlansCol.find(filter).sort({ timestamp: -1 }).limit(parseInt(limit, 10)).toArray();
+        } catch (err) {
+            console.error('Failed to fetch action plans from MongoDB:', err.message);
+        }
+    }
+
+    return actionPlanMemoryFallback.slice(0, parseInt(limit, 10));
+}
+
 module.exports = {
+    saveActionPlan,
+    getActionPlanHistory,
     initMongo,
     savePrediction,
     getHistory,

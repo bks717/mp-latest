@@ -977,20 +977,55 @@ app.post('/api/impact/multiscale', async (req, res) => {
 
 app.post('/api/action/multiscale', async (req, res) => {
     try {
-        const { lat, lng, budget } = req.body;
+        const { lat, lng, budget, user_profile, time_horizon_hours, radius_km, sar_features } = req.body;
         if (lat == null || lng == null) {
             return res.status(400).json({ error: 'lat and lng coordinates are required.' });
         }
-        console.log(`🎯 Multi-Scale Action Plan request for [${lat}, ${lng}] (budget=$${budget})...`);
+        const sarCount = Array.isArray(sar_features) ? sar_features.length : 0;
+        console.log(`🎯 Multi-Scale Action Plan request for [${lat}, ${lng}] (profile=${user_profile || 'vehicle'}, budget=$${budget}, horizon=T+${time_horizon_hours || 0}h, SAR_features=${sarCount})...`);
         const aiResponse = await axios.post(
             AI_API_URL + '/api/action-multiscale',
-            { lat: parseFloat(lat), lng: parseFloat(lng), budget: budget ? parseFloat(budget) : 100000.0 },
+            {
+                lat: parseFloat(lat),
+                lng: parseFloat(lng),
+                budget: budget ? parseFloat(budget) : 100000.0,
+                budget_usd: budget ? parseFloat(budget) : 100000.0,
+                user_profile: user_profile || 'vehicle',
+                time_horizon_hours: parseInt(time_horizon_hours || 0, 10),
+                radius_km: parseFloat(radius_km || 6.0),
+                sar_features: Array.isArray(sar_features) ? sar_features : undefined
+            },
             { timeout: 600_000 }
         );
+
+        // Store into MongoDB action_plans collection for reproducible incident command records
+        if (aiResponse.data && aiResponse.data.status === 'success') {
+            try {
+                await predictionStore.saveActionPlan(aiResponse.data);
+            } catch (pErr) {
+                console.warn('⚠️ Could not save action plan to store:', pErr.message);
+            }
+        }
+
         res.json(aiResponse.data);
     } catch (error) {
         console.error('🚨 Error in multi-scale Action Plan proxy:', error.message);
         res.status(500).json({ error: 'Failed to execute multi-scale action plan: ' + error.message });
+    }
+});
+
+app.post('/api/action-plan/generate', async (req, res) => {
+    req.url = '/api/action/multiscale';
+    return app._router.handle(req, res);
+});
+
+app.get('/api/action-plan/history', async (req, res) => {
+    try {
+        const { lat, lng, limit } = req.query;
+        const plans = await predictionStore.getActionPlanHistory({ lat, lng, limit });
+        res.json({ status: 'success', history: plans });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch action plan history: ' + error.message });
     }
 });
 
