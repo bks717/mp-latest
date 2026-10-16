@@ -1876,6 +1876,9 @@ async def impact_multiscale(request: MultiScaleImpactRequest):
     # 2. Ingest genuine hydrological and weather telemetry for Hazard (H) factor
     glofas_discharge = None
     rainfall_24h_mm = None
+    slope_pct = None
+    glofas_provenance = None
+    rainfall_provenance = None
     try:
         data_coll = get_data_collector()
         if data_coll:
@@ -1883,10 +1886,32 @@ async def impact_multiscale(request: MultiScaleImpactRequest):
                 asyncio.to_thread(data_coll.collect_all_factors, lat, lng, 10.0),
                 timeout=4.0
             )
-            if factors and "glofas_hydrology" in factors:
-                glofas_discharge = factors["glofas_hydrology"].get("current_discharge")
-            if factors and "weather_and_soil" in factors:
-                rainfall_24h_mm = factors["weather_and_soil"].get("precipitation_sum_24h")
+            if factors and "river_discharge" in factors:
+                rd = factors["river_discharge"]
+                glofas_discharge = rd.get("value") or rd.get("discharge_m3s")
+                glofas_provenance = {
+                    "source": "Copernicus GloFAS 4.0 Modelled Reanalysis (via Open-Meteo Flood API)",
+                    "data_type": "MODELLED_REANALYSIS",
+                    "available": glofas_discharge is not None,
+                    "current_discharge_m3s": glofas_discharge,
+                    "flow_anomaly_ratio": rd.get("flow_anomaly_ratio"),
+                    "retrieved_at_utc": rd.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+                    "note": "GloFAS river discharge modelled reanalysis - not in-situ gauge observation"
+                }
+            if factors and "rainfall_24h" in factors:
+                rf = factors["rainfall_24h"]
+                rainfall_24h_mm = rf.get("value")
+                rainfall_provenance = {
+                    "source": "ECMWF IFS via Open-Meteo Forecast",
+                    "data_type": "FORECAST",
+                    "available": rainfall_24h_mm is not None,
+                    "precipitation_24h_mm": rainfall_24h_mm,
+                    "retrieved_at_utc": rf.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+                    "note": "ECMWF Integrated Forecasting System operational forecast"
+                }
+            if factors and "slope_topography" in factors:
+                st = factors["slope_topography"]
+                slope_pct = st.get("value")
     except Exception as e:
         logger.info(f"Hydrological telemetry query notice: {e}")
 
@@ -1974,7 +1999,14 @@ async def impact_multiscale(request: MultiScaleImpactRequest):
         pre_osm = (new_bldgs, new_infra, places, is_real, total_osm, new_roads)
         res = impact_assessor.assess(
             flood_gdf, bbox, estimated_depth_m=depth, pre_fetched_osm=pre_osm,
-            glofas_discharge=glofas_discharge, rainfall_24h_mm=rainfall_24h_mm
+            glofas_discharge=glofas_discharge,
+            glofas_discharge_provenance=glofas_provenance,
+            rainfall_24h_mm=rainfall_24h_mm,
+            rainfall_provenance=rainfall_provenance,
+            sar_acquisition_time=sar_acquisition_time,
+            sar_source=flood_source,
+            gdacs_historical=gdacs_historical,
+            slope_pct=slope_pct,
         )
 
         summary = res.get("summary", {})
@@ -2033,10 +2065,54 @@ async def impact_multiscale(request: MultiScaleImpactRequest):
         })
 
     # Macro assessment across all 4 extents combined
+    # Fetch GDACS historical flood events near assessment area for context
+    gdacs_historical = []
+    try:
+        gdacs_url = "https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH"
+        gdacs_params = {
+            "eventlist": "FL",
+            "alertlevel": "Green;Orange;Red",
+            "fromdate": (datetime.now(timezone.utc) - __import__("datetime").timedelta(days=90)).strftime("%Y-%m-%d"),
+            "todate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "pagesize": 50
+        }
+        gdacs_resp = requests.get(gdacs_url, params=gdacs_params, headers={"User-Agent": "FloodWatch-ImpactEngine/3.0"}, timeout=8.0)
+        if gdacs_resp.status_code == 200:
+            gdacs_features = gdacs_resp.json().get("features", [])
+            for feat in gdacs_features:
+                props = feat.get("properties", {})
+                geom = feat.get("geometry", {})
+                coords = geom.get("coordinates", [])
+                if coords and len(coords) >= 2:
+                    # Check if event is within ~200km of assessment point
+                    ev_dist = math.hypot(lat - coords[1], lng - coords[0]) * 111.0
+                    if ev_dist <= 200.0:
+                        gdacs_historical.append({
+                            "eventid": props.get("eventid"),
+                            "eventname": props.get("eventname"),
+                            "country": props.get("country"),
+                            "alertlevel": props.get("alertlevel"),
+                            "fromdate": props.get("fromdate"),
+                            "todate": props.get("todate"),
+                            "lat": float(coords[1]),
+                            "lon": float(coords[0]),
+                            "distance_km": round(ev_dist, 1),
+                            "source": "UN/EC GDACS Historical Flood Archive"
+                        })
+    except Exception as e:
+        logger.info(f"GDACS historical fetch notice: {e}")
+
     macro_pre_osm = (all_bldgs_gdf, all_infra_gdf, places, is_real, total_osm, all_roads_gdf)
     macro_res = impact_assessor.assess(
         flood_gdf, catchment_geo["bbox"], estimated_depth_m=depth, pre_fetched_osm=macro_pre_osm,
-        glofas_discharge=glofas_discharge, rainfall_24h_mm=rainfall_24h_mm
+        glofas_discharge=glofas_discharge,
+        glofas_discharge_provenance=glofas_provenance,
+        rainfall_24h_mm=rainfall_24h_mm,
+        rainfall_provenance=rainfall_provenance,
+        sar_acquisition_time=sar_acquisition_time,
+        sar_source=flood_source,
+        gdacs_historical=gdacs_historical,
+        slope_pct=slope_pct,
     )
     combined_risk = macro_res.get("scientific_risk_assessment", {})
 

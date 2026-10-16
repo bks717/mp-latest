@@ -2429,6 +2429,8 @@
                         <div style="color:var(--text-1);">• <b>Demographic Model:</b> UN-Habitat 3.8 occupants/household calibrated with WorldPop 100m</div>
                         <div style="color:var(--text-1);">• <b>Risk Assessment:</b> UNDRR Risk Formulation: <i>Risk = 100 × Hazard × (0.50 Exposure + 0.50 Vulnerability)</i></div>
                         <div id="impact-live-source" style="color:#38bdf8; font-size:10px; margin-top:4px;">• <b>Satellite Flood Extent:</b> Sentinel-1 SAR Radar Active Observation</div>
+                        <div id="impact-data-provenance" style="margin-top:6px;"></div>
+                        <div id="impact-gdacs-history" style="margin-top:6px; display:none;"></div>
                     </div>
                 </div>
             </section>
@@ -3611,6 +3613,78 @@ async function runMultiScaleImpactAssessment(evt) {
         const liveSourceEl = document.getElementById('impact-live-source');
         if (liveSourceEl && data.data_provenance) {
             liveSourceEl.innerHTML = `• <b>Flood Hazard Delineation:</b> ${data.data_provenance.flood_observations || 'Sentinel-1 SAR Radar Active Overpass'}`;
+        }
+
+        // ── Data Provenance & Quality Panel ──
+        const provEl = document.getElementById('impact-data-provenance');
+        if (provEl && data.data_provenance) {
+            const prov = data.data_provenance;
+            const dq = prov.data_quality || {};
+            const obs = (dq.observed || []).length;
+            const mod = (dq.modelled_reanalysis || []).length;
+            const fct = (dq.forecast || []).length;
+            const sat = (dq.satellite_derived || []).length;
+            const est = (dq.estimated || []).length;
+            const unav = (dq.unavailable || []).length;
+
+            // Build source detail HTML
+            let sourcesHtml = '';
+            if (prov.sources) {
+                for (const [key, src] of Object.entries(prov.sources)) {
+                    const availCls = src.available ? 'text-success' : 'text-danger';
+                    const availTxt = src.available ? 'AVAILABLE' : 'UNAVAILABLE';
+                    sourcesHtml += `
+                        <div style="font-size:9px; margin:3px 0; padding:4px; background:var(--bg-2); border-radius:3px;">
+                            <strong style="color:var(--text-0);">${key.replace(/_/g, ' ')}:</strong>
+                            <span style="${availCls};">${availTxt}</span>
+                            <span style="color:var(--text-2); font-size:8px;"> (${src.data_type || 'unknown'})</span><br>
+                            <span style="color:var(--text-2); font-size:8px;">${src.note || ''}</span>
+                            ${src.retrieved_at_utc ? `<br><span style="color:var(--text-2); font-size:8px;">Retrieved: ${new Date(src.retrieved_at_utc).toLocaleString()}</span>` : ''}
+                        </div>`;
+                }
+            }
+
+            provEl.innerHTML = `
+                <div style="margin-top:8px; padding:10px; background:var(--bg-2); border:1px solid var(--border-base); border-radius:var(--radius-sm);">
+                    <div style="font-weight:700; color:var(--text-0); margin-bottom:6px; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Data Provenance & Quality</div>
+                    <div style="font-size:9px; margin-bottom:6px;">
+                        <span style="color:#38bdf8;">● Observed: ${obs}</span> &nbsp;
+                        <span style="color:#f59e0b;">● Modelled: ${mod}</span> &nbsp;
+                        <span style="color:#3b82f6;">● Forecast: ${fct}</span> &nbsp;
+                        <span style="color:#06b6d4;">● Satellite: ${sat}</span> &nbsp;
+                        <span style="color:#f43f5e;">● Unavailable: ${unav}</span>
+                    </div>
+                    <div style="font-size:9px; color:var(--text-1); margin-bottom:6px;">
+                        <strong>Sources:</strong><br>${sourcesHtml || '<em>No source details available</em>'}
+                    </div>
+                    ${prov.limitations && prov.limitations.length > 0 ? `
+                    <div style="font-size:9px; color:#f59e0b; margin-top:6px;">
+                        <strong>⚠ Limitations:</strong><br>
+                        ${prov.limitations.map(l => `• ${l}`).join('<br>')}
+                    </div>` : ''}
+                    <div style="font-size:8px; color:var(--text-2); margin-top:6px;">
+                        Assessment generated: ${new Date(prov.assessment_timestamp_utc || Date.now()).toLocaleString()}
+                    </div>
+                </div>`;
+        }
+
+        // ── GDACS Historical Events Panel ──
+        const gdacsEl = document.getElementById('impact-gdacs-history');
+        if (gdacsEl && data.gdacs_historical_events && data.gdacs_historical_events.length > 0) {
+            const events = data.gdacs_historical_events.slice(0, 5);
+            gdacsEl.innerHTML = `
+                <div style="margin-top:8px; padding:10px; background:var(--bg-2); border:1px solid var(--border-base); border-radius:var(--radius-sm);">
+                    <div style="font-weight:700; color:var(--text-0); margin-bottom:6px; font-size:11px; text-transform:uppercase; letter-spacing:0.05em;">Historical Flood Events (GDACS Archive, 90-day)</div>
+                    ${events.map(e => `
+                        <div style="font-size:9px; margin:3px 0; padding:4px; background:var(--bg-3); border-radius:3px; border-left:3px solid #f59e0b;">
+                            <strong>${e.eventname || 'Unnamed Event'}</strong> (${e.country || 'Unknown'})<br>
+                            <span style="color:var(--text-2);">${e.alertlevel || 'Unknown'} alert · ${e.fromdate || 'Unknown'} to ${e.todate || 'Unknown'} · ~${e.distance_km || '?'}km away</span>
+                        </div>`).join('')}
+                    ${data.gdacs_historical_events.length > 5 ? `<div style="font-size:8px; color:var(--text-2); margin-top:4px;">+ ${data.gdacs_historical_events.length - 5} more events...</div>` : ''}
+                </div>`;
+            gdacsEl.style.display = 'block';
+        } else if (gdacsEl) {
+            gdacsEl.style.display = 'none';
         }
 
         // Priority evacuation zones
