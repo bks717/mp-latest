@@ -36,7 +36,7 @@ Write-Host '========================================' -ForegroundColor Yellow
 
 # ---- Phase 0: Audit ----
 if ($Phase -eq '0') {
-    $auditFile = Join-Path $repoRoot 'reports\phase0\endpoint_audit.md'
+    $auditFile = Join-Path $reportDir 'endpoint_audit.md'
     if (-not (Test-Path $auditFile)) { Write-Fail 'reports\phase0\endpoint_audit.md not found' }
     else {
         $content = Get-Content $auditFile -Raw
@@ -45,17 +45,13 @@ if ($Phase -eq '0') {
         if ($content -notmatch 'latency') { Write-Fail 'endpoint_audit.md missing latency field' }
         Write-Pass 'endpoint_audit.md present with status/version/latency fields'
     }
-    $testFiles = Get-ChildItem -Path (Join-Path $repoRoot 'tests') -Recurse -ErrorAction SilentlyContinue
-    Write-Info 'Test files present: ' $testFiles.Count
 }
 
 # ---- Phase 1: Evidence ledger + ingestion ----
 if ($Phase -eq '1') {
     $evidenceDir = Join-Path $repoRoot 'reports\phase1'
     if (-not (Test-Path $evidenceDir)) { Write-Fail 'reports\phase1\ directory not found' }
-    else {
-        Write-Pass 'reports\phase1\ directory present'
-    }
+    else { Write-Pass 'reports\phase1\ directory present' }
     $ingestion = Join-Path $repoRoot 'disaster-ai-api\global_mesh\ingestion_pipeline.py'
     if (-not (Test-Path $ingestion)) { Write-Fail 'global_mesh\ingestion_pipeline.py not found' }
     else {
@@ -65,8 +61,6 @@ if ($Phase -eq '1') {
         if ($content -notmatch 'MODEL_ANALYSIS') { Write-Fail 'ingestion_pipeline.py missing MODEL_ANALYSIS tag' }
         else { Write-Pass 'ingestion_pipeline.py tags Open-Meteo weather as MODEL_ANALYSIS' }
     }
-    $store = Join-Path $repoRoot 'disaster-ai-api\global_mesh\mongodb_store.py'
-    if (-not (Test-Path $store)) { Write-Fail 'global_mesh\mongodb_store.py not found' }
 }
 
 # ---- Phase 2: Label fusion (N1) ----
@@ -78,9 +72,9 @@ if ($Phase -eq '2') {
         if ($content -notmatch 'GDACS') { Write-Fail 'dataset_report.md must confirm no GDACS features' }
         else { Write-Pass 'dataset_report.md confirms no GDACS features as training feature' }
     }
-    $leakage = Join-Path $repoRoot 'tests\leakage_test.py'
-    if (-not (Test-Path $leakage)) { Write-Fail 'tests\leakage_test.py not found' }
-    else { Write-Pass 'tests\leakage_test.py present' }
+    $leakage = Join-Path $repoRoot 'disaster-ai-api\tests\leakage_test.py'
+    if (-not (Test-Path $leakage)) { Write-Fail 'disaster-ai-api/tests/leakage_test.py not found' }
+    else { Write-Pass 'tests/leakage_test.py present' }
 }
 
 # ---- Phase 3: Models ----

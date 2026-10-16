@@ -1,0 +1,10 @@
+# Global Mesh Python - ignore cache and test artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+global_mesh/cache/
+global_mesh/__pycache__/
+disaster-ai-api/test_*.py
+disaster-ai-api/check_*.py
+*.env
