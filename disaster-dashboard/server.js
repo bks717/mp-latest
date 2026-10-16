@@ -9,9 +9,10 @@ const { logScan, getHistory, deleteScan, clearHistory } = require('./history');
 const mgmt = require('./management');
 const predictionStore = require('./prediction_store');
 const progressiveScanner = require('./progressive_scanner');
+require('dotenv').config();
 
 const app  = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const AI_API_URL = process.env.API_URL || 'http://127.0.0.1:8000';
 
 // ── Middleware ────────────────────────────────────────────────────────────────

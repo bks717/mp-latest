@@ -10,6 +10,8 @@ import pandas as pd
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 logger = logging.getLogger("DisasterAPI")
+from dotenv import load_dotenv
+load_dotenv()
 from typing import Dict, List, Any, Optional, Tuple
 import torch
 import rasterio
