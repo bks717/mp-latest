@@ -151,6 +151,14 @@ def build_alert_candidates(
     else:
         features = []
 
+    # Build a lookup from cell_id to region record
+    region_by_cell: Dict[str, Dict[str, Any]] = {}
+    for r in top_emerging:
+        region_by_cell[r.get("cell_id", r.get("id"))] = r
+
+    # Build a set of cell_ids from top_emerging to avoid duplicates
+    top_emerging_cell_ids = {r.get("cell_id", r.get("id")) for r in top_emerging if r.get("cell_id") or r.get("id")}
+
     logger.info(
         "DEBUG: geojson type = %s, features type = %s, n_features = %d",
         type(geojson).__name__,
@@ -170,6 +178,10 @@ def build_alert_candidates(
         if not cell_id:
             continue
 
+        # Skip cells already in top_emerging to avoid duplicates
+        if cell_id in top_emerging_cell_ids:
+            continue
+
         region = region_by_cell.get(cell_id, props)
 
         prob = props.get("flood_occurrence_probability")
@@ -181,8 +193,10 @@ def build_alert_candidates(
             peak_score = float(props.get("peak_risk_score", 0) or 0)
             if peak_score >= 50:
                 tier = "WARNING"
+                prob = peak_score / 100.0  # Use risk score as probability fallback
             elif peak_score >= 25:
                 tier = "WATCH"
+                prob = peak_score / 100.0  # Use risk score as probability fallback
             else:
                 continue
 
