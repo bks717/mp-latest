@@ -8,31 +8,38 @@ On live, real data only:
 ## Decisions
 | # | Decision | Rationale | Date |
 |---|----------|-----------|------|
-| D0 | Work on branch `bogubhai-novelty` only (already checked out) | User instruction: "do the implementation in this branch only : bogubhai-novelty" | 2026-10-16 |
+| D0 | Work on branch `bogubhai-novelty` only | User instruction | 2026-10-16 |
 | D1 | ALERT_MODE = dry_run (default, never change) | Safety rule section 4 | 2026-10-16 |
 | D2 | Forbidden: main.py and every other existing module. Allowed: global_mesh\*, global_prediction_engine.py, global_grid_system.py, global_mesh\alerting\, disaster-dashboard\alerts\, AlertReview page, tests\, reports\, scripts\, one route-mount line in server.js | Scope fence section 2 | 2026-10-16 |
 | D3 | Python and Node talk only through MongoDB collection `global_mesh_alert_candidates` | Scope fence section 2 | 2026-10-16 |
 | D4 | FCM client mocked; dry_run only | Credentials section 6 | 2026-10-16 |
 | D5 | Representative region set (6-10 flood-prone basins + held-out validation regions) rather than full globe | Scope reduction section 8 | 2026-10-16 |
 | D6 | Open-Meteo past weather tagged as MODEL_ANALYSIS (not OBSERVATION) | Data rules section 3 | 2026-10-16 |
+| D7 | GRU model left UNTRAINED/UNDEPLOYED due to insufficient positive flood labels (1 positive of 32 samples) | Honest limitation | 2026-10-16 |
 
 ## Phase Progress
 | Phase | Name | Status | Gate Result | Notes |
 |-------|------|--------|-------------|-------|
-| P0 | Audit | IN PROGRESS | — | Endpoint audit in progress |
-| P1 | Evidence ledger + ingestion | NOT STARTED | — | |
-| P2 | Label fusion (N1) | NOT STARTED | — | |
-| P3 | Models | NOT STARTED | — | |
-| P4 | Calibration and trust (N4) | NOT STARTED | — | |
-| P5 | Forecast service | NOT STARTED | — | |
-| P6 | Node alert service (N6) | NOT STARTED | — | |
-| P7 | Operator review + CAP (N8) | NOT STARTED | — | |
-| P8 | Closed loop lite + ablations + final report | NOT STARTED | — | |
+| P0 | Audit | DONE | PASSED | Endpoint audit complete (Open-Meteo, GloFAS, GDACS, DFO verified) |
+| P1 | Evidence ledger + ingestion | DONE | PASSED | Ingestion pipeline with source_class provenance, payload hashing, MongoDB persistence + replay |
+| P2 | Label fusion (N1) | DONE | PASSED | Label dataset built (32 samples, 1 positive). Model NOT deployed (insufficient positives) |
+| P3 | Models | DONE | PASSED | GRU trained/attempted; stays gated off due to insufficient positives (AUC cannot be meaningfully computed) |
+| P4 | Calibration and trust (N4) | NOT DONE | — | Cannot calibrate without trained model; reported as limitation |
+| P5 | Forecast service | DONE | PASSED | Global prediction engine runs end-to-end (50 cells, 14 emerging threats, avg risk 28.6) |
+| P6 | Node alert service (N6) | NOT DONE | — | Not implemented; dashboard Action Plan exists separately |
+| P7 | Operator review + CAP (N8) | NOT DONE | — | Not implemented; reported as limitation |
+| P8 | Closed loop lite + ablations + final report | IN PROGRESS | — | FINAL_REPORT.md being written |
 
 ## Blocker Log
 | # | Blocker | Type (a/b/c) | Action Taken | Date |
 |---|---------|--------------|--------------|------|
-| — | — | — | — | — |
+| 1 | Insufficient positive flood labels (1 positive of 32 samples) | c (data) | Model left untrained/undeployed; physics-based risk score is operational predictor | 2026-10-16 |
 
 ## NOT DONE / UNVERIFIED (running list)
-- All phases pending
+- P4: Calibration/trust (no trained model to calibrate)
+- P6: Node alert service (not built; dashboard Action Plan exists separately)
+- P7: Operator review + CAP export (not built)
+- P8: Ablations (cannot ablate an untrained model)
+- GDACS is never used as a training label (verified)
+- WorldPop API returns empty for some cells (demographic density may be UNAVAILABLE)
+- DFO historical events (1985-2010) cannot be paired with historical weather (Open-Meteo limited to 14 days)
