@@ -40,6 +40,10 @@
   .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
   .status-pill.dry_run { background: #fef3c7; color: #92400e; }
   .status-pill.live { background: #fee2e2; color: #991b1b; }
+  .status-pill.status-approved, .status-pill.approved { background: #dcfce7; color: #15803d; }
+  .status-pill.status-rejected, .status-pill.rejected { background: #fee2e2; color: #b91c1c; }
+  .status-pill.status-cancelled, .status-pill.cancelled { background: #f1f5f9; color: #475569; }
+  .status-pill.status-pending, .status-pill.pending { background: #fef3c7; color: #92400e; }
   .btn-group { display: flex; gap: 8px; margin-top: 12px; }
   .btn { padding: 10px 16px; font-size: 0.875rem; font-weight: 500; border-radius: 6px; border: 1px solid transparent; cursor: pointer; }
   .btn.primary { background: #2563eb; color: #fff; }
@@ -128,15 +132,15 @@ function render() {
     <tr>
       <td><code>${c.cell_id}</code></td>
       <td>${c.region_name || '—'}</td>
-      <td>${(c.lat||0).toFixed(4)}, ${(c.lon||0).toFixed(4)}</td>
-      <td>${(c.predicted_flood_probability||0).toFixed(3)}</td>
+      <td>${(c.lat != null && c.lon != null) ? Number(c.lat).toFixed(4) + ', ' + Number(c.lon).toFixed(4) : '<span style="color:#94a3b8;font-style:italic;">—</span>'}</td>
+      <td>${((c.predicted_flood_probability != null && c.predicted_flood_probability > 0) ? c.predicted_flood_probability : (c.peak_risk_score||0)/100).toFixed(3)}</td>
       <td><span class="badge ${c.risk_tier}">${c.risk_tier}</span></td>
       <td><span class="badge ${c.trust_flag?'trusted':'untrusted'}">${c.trust_flag?'Trusted':'Untrusted'}</span></td>
       <td>${c.severity || '—'}</td>
       <td>${c.primary_driver || '—'}</td>
       <td>${(c.estimated_exposed_pop||0).toLocaleString()}</td>
       <td>
-        <span class="status-pill ${c.trust_flag?'':'untrusted'}">${c.model_status || 'untrained'}</span>
+        <span class="status-pill status-${(c.status || 'pending').toLowerCase()}">${c.status || 'PENDING'}</span>
       </td>
       <td>
         <div class="btn-group">
@@ -169,7 +173,7 @@ async function decide(candidateId, action) {
 }
 
 async function exportCAP() {
-  const approved = candidates.filter(c => c._decision === 'APPROVED');
+  const approved = candidates.filter(c => c.status === 'APPROVED' || c._decision === 'APPROVED' || c.operator_decision === 'APPROVED');
   if (!approved.length) {
     showToast('No approved candidates to export', 'error');
     return;

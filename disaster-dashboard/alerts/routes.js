@@ -44,10 +44,25 @@ router.get('/candidates', async (req, res) => {
   try {
     await init();
     const { status, tier, limit = 50 } = req.query;
-    const filter = {};
+    const filter = { candidate_id: { $exists: true } };
     if (status) filter.status = status;
     if (tier) filter.risk_tier = tier;
-    const candidates = await alertsCol.find(filter).sort({ timestamp_utc: -1 }).limit(parseInt(limit)).toArray();
+    const all = await alertsCol
+      .find(filter)
+      .sort({ created_at: -1, timestamp_utc: -1, issue_timestamp_utc: -1, _id: -1 })
+      .toArray();
+
+    // Deduplicate by candidate_id or cell_id, keeping the newest record
+    const seen = new Set();
+    const candidates = [];
+    for (const c of all) {
+      const key = c.candidate_id || c.cell_id;
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        candidates.push(c);
+        if (candidates.length >= parseInt(limit)) break;
+      }
+    }
     res.json({ candidates, count: candidates.length });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -66,8 +81,8 @@ router.post('/decide', async (req, res) => {
       return res.status(400).json({ error: 'Invalid action: ' + action });
     }
 
-    // Find the candidate
-    const candidate = await alertsCol.findOne({ candidate_id });
+    // Find the latest candidate record
+    const candidate = await alertsCol.findOne({ candidate_id }, { sort: { created_at: -1, _id: -1 } });
     if (!candidate) {
       return res.status(404).json({ error: 'Candidate not found' });
     }
@@ -78,23 +93,26 @@ router.post('/decide', async (req, res) => {
     // Override with user decision if they want to override
     let finalAction = decision.action;
     let reason = decision.reason;
-    if (action === 'APPROVE' && candidate.trust_flag) {
-      finalAction = 'ESCALATE';
+    if (action === 'APPROVE') {
+      finalAction = 'APPROVED';
       reason = 'Manually approved by operator';
     } else if (action === 'REJECT') {
-      finalAction = 'NO_CHANGE';
+      finalAction = 'REJECTED';
       reason = 'Manually rejected by operator';
     } else if (action === 'CANCEL') {
-      finalAction = 'ALL_CLEAR';
+      finalAction = 'CANCELLED';
       reason = 'Manually cancelled by operator';
     }
 
     // Update the candidate in MongoDB
-    await alertsCol.updateOne(
+    await alertsCol.updateMany(
       { candidate_id },
       {
         $set: {
           status: finalAction,
+          decision: finalAction,
+          operator_decision: finalAction,
+          _decision: finalAction,
           decision_reason: reason,
           decision_timestamp: new Date().toISOString(),
           policy_decision: decision,
@@ -118,7 +136,9 @@ router.post('/cap/export', async (req, res) => {
   try {
     await init();
     const { candidate_ids } = req.body;
-    const filter = candidate_ids ? { candidate_id: { $in: candidate_ids }, status: 'APPROVED' } : { status: 'APPROVED' };
+    const filter = candidate_ids
+      ? { candidate_id: { $in: candidate_ids } }
+      : { status: { $in: ['APPROVED', 'ESCALATE'] } };
     const approved = await alertsCol.find(filter).toArray();
 
     if (!approved.length) {

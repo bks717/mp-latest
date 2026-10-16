@@ -71,11 +71,21 @@ def run_forecast_cycle() -> int:
     alert_col = store.db["global_mesh_alert_candidates"]
     alert_docs = []
     for c in candidates:
-        alert_docs.append({**c, "scan_id": result.get("scan_id"), "created_at": now_utc})
+        alert_docs.append({
+            **c,
+            "scan_id": result.get("scan_id"),
+            "created_at": now_utc,
+            "timestamp_utc": now_utc,
+        })
 
     if alert_docs:
-        alert_col.insert_many(alert_docs)
-        logger.info("Wrote %d alert candidates to MongoDB", len(alert_docs))
+        for doc in alert_docs:
+            alert_col.update_one(
+                {"candidate_id": doc["candidate_id"]},
+                {"$set": doc},
+                upsert=True,
+            )
+        logger.info("Wrote/updated %d alert candidates in MongoDB", len(alert_docs))
     else:
         logger.info("No alert candidates to write")
 

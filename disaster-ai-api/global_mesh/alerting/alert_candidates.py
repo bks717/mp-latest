@@ -25,8 +25,8 @@ import logging
 import math
 import os
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("GlobalMeshAlertCandidates")
 logging.basicConfig(level=logging.INFO)
@@ -74,6 +74,9 @@ class AlertCandidate:
     soil_moisture: float
     elevation_m: float
     estimated_exposed_pop: int
+    status: str = "PENDING"
+    timestamp_utc: Optional[str] = None
+    created_at: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -87,6 +90,30 @@ def _sha256(obj: Any) -> str:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _lat_lon_from_cell_id(cell_id: str) -> Tuple[Optional[float], Optional[float]]:
+    """Deterministically compute centroid coordinates from a grid_{lat_idx}_{lon_idx} ID."""
+    try:
+        parts = str(cell_id).split('_')
+        if len(parts) == 3:
+            lat_idx = int(parts[1])
+            lon_idx = int(parts[2])
+            lat = round(-60.0 + (lat_idx + 0.5) * 0.25, 4)
+            lon = round(-180.0 + (lon_idx + 0.5) * 0.25, 4)
+            return lat, lon
+    except Exception:
+        pass
+    return None, None
+
+
+def _compute_target_valid_time(issue_ts: str, horizon_hours: int) -> str:
+    """Compute target validity timestamp from issue timestamp + horizon."""
+    try:
+        dt = datetime.fromisoformat(str(issue_ts).replace("Z", "+00:00"))
+        return (dt + timedelta(hours=horizon_hours)).isoformat()
+    except Exception:
+        return datetime.now(timezone.utc).isoformat()
 
 
 def _tier_from_probability(prob: Optional[float]) -> str:
@@ -126,7 +153,7 @@ def build_alert_candidates(
         type(prediction_result),
         str(prediction_result)[:200],
     )
-    
+
     # Trust assessment: model is trusted only if trained AND validated
     model_trusted = model_trained and model_validated and (
         model_auc is not None and model_auc >= TRUSTED_MODEL_AUC_MIN
@@ -142,6 +169,7 @@ def build_alert_candidates(
     )
 
     candidates: List[Dict[str, Any]] = []
+    seen_cells = set()
     top_emerging = prediction_result.get("top_emerging_regions", []) or []
     geojson = prediction_result.get("geojson", [])
     if isinstance(geojson, dict):
@@ -154,64 +182,89 @@ def build_alert_candidates(
     # Build a lookup from cell_id to region record
     region_by_cell: Dict[str, Dict[str, Any]] = {}
     for r in top_emerging:
-        region_by_cell[r.get("cell_id", r.get("id"))] = r
-
-    # Build a set of cell_ids from top_emerging to avoid duplicates
-    top_emerging_cell_ids = {r.get("cell_id", r.get("id")) for r in top_emerging if r.get("cell_id") or r.get("id")}
+        c_id = r.get("cell_id", r.get("id"))
+        if c_id:
+            region_by_cell[c_id] = r
 
     logger.info(
-        "DEBUG: geojson type = %s, features type = %s, n_features = %d",
+        "DEBUG: geojson type = %s, features type = %s, n_features = %d, top_emerging = %d",
         type(geojson).__name__,
         type(features).__name__,
         len(features),
+        len(top_emerging),
     )
 
-    # Build a lookup from cell_id to region record
-    region_by_cell: Dict[str, Dict[str, Any]] = {}
+    # Combine GeoJSON features and top_emerging regions without omitting anything
+    eval_items: List[Dict[str, Any]] = list(features)
     for r in top_emerging:
-        region_by_cell[r.get("cell_id", r.get("id"))] = r
+        c_id = r.get("cell_id", r.get("id"))
+        if c_id and not any((f.get("properties", {}) or {}).get("cell_id") == c_id for f in features):
+            eval_items.append({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [r.get("lon"), r.get("lat")]},
+                "properties": r,
+            })
 
-    # Also process all geojson features (covers all evaluated cells)
-    for feature in features:
-        props = feature.get("properties", {}) or {}
-        cell_id = props.get("cell_id")
-        if not cell_id:
-            continue
-
-        # Skip cells already in top_emerging to avoid duplicates
-        if cell_id in top_emerging_cell_ids:
+    # Process all evaluated cells
+    for item in eval_items:
+        props = item.get("properties", {}) if isinstance(item, dict) and "properties" in item else item
+        cell_id = props.get("cell_id") or props.get("id")
+        if not cell_id or cell_id in seen_cells:
             continue
 
         region = region_by_cell.get(cell_id, props)
 
-        # Get lat/lng from GeoJSON geometry coordinates [lon, lat]
-        geometry = feature.get("geometry", {}) or {}
+        # 1. Determine coordinates (Point geometry: [lon, lat])
+        geometry = item.get("geometry", {}) or {}
         coordinates = geometry.get("coordinates", [None, None]) or [None, None]
-        geojson_lat = coordinates[1] if len(coordinates) > 1 else None
-        geojson_lon = coordinates[0] if len(coordinates) > 0 else None
+        geojson_lat = coordinates[1] if len(coordinates) > 1 and coordinates[1] is not None else None
+        geojson_lon = coordinates[0] if len(coordinates) > 0 and coordinates[0] is not None else None
 
+        # Fallback to props/region
+        if geojson_lat is None:
+            geojson_lat = props.get("lat") or region.get("lat")
+        if geojson_lon is None:
+            geojson_lon = props.get("lon") or region.get("lon")
+
+        # Fallback to deterministic cell_id centroid
+        if geojson_lat is None or geojson_lon is None:
+            fb_lat, fb_lon = _lat_lon_from_cell_id(cell_id)
+            if geojson_lat is None:
+                geojson_lat = fb_lat
+            if geojson_lon is None:
+                geojson_lon = fb_lon
+
+        # 2. Probability and tier
         prob = props.get("flood_occurrence_probability")
+        if prob is not None:
+            prob = float(prob)
         tier = _tier_from_probability(prob)
 
-        # Only emit alert candidates for cells with meaningful risk
+        peak_score = float(props.get("peak_risk_score", 0) or props.get("flood_risk_score", 0) or 0)
+
+        # Fall back to peak_risk_score when model probability is unavailable or NORMAL with high risk score
         if tier == "NORMAL":
-            # Fall back to peak_risk_score when model probability is unavailable
-            peak_score = float(props.get("peak_risk_score", 0) or 0)
             if peak_score >= 50:
                 tier = "WARNING"
-                prob = peak_score / 100.0  # Use risk score as probability fallback
+                prob = round(peak_score / 100.0, 3)
             elif peak_score >= 25:
                 tier = "WATCH"
-                prob = peak_score / 100.0  # Use risk score as probability fallback
+                prob = round(peak_score / 100.0, 3)
             else:
                 continue
+        elif prob is None or prob == 0:
+            if peak_score >= 25:
+                prob = round(peak_score / 100.0, 3)
 
         # Trust flag: only trust model output if trained+validated
-        trust_flag = model_trusted and tier in ("WARNING", "IMMINENT")
+        trust_flag = bool(model_trusted and tier in ("WARNING", "IMMINENT"))
 
-        # Build a deterministic candidate ID
-        cand_id_input = f"{cell_id}:{props.get('peak_time_hours', 24)}:{now_utc[:10]}"
+        horizon = int(props.get("peak_time_hours", 24) or 24)
+        cand_id_input = f"{cell_id}:{horizon}:{now_utc[:10]}"
         candidate_id = f"ac_{hashlib.sha256(cand_id_input.encode()).hexdigest()[:12]}"
+
+        issue_ts = prediction_result.get("timestamp", now_utc)
+        target_valid_ts = _compute_target_valid_time(issue_ts, horizon)
 
         candidate = {
             "candidate_id": candidate_id,
@@ -219,25 +272,28 @@ def build_alert_candidates(
             "cell_id": cell_id,
             "lat": geojson_lat,
             "lon": geojson_lon,
-            "region_name": props.get("name"),
-            "country": props.get("country"),
-            "basin": props.get("basin"),
-            "forecast_horizon_hours": int(props.get("peak_time_hours", 24) or 24),
-            "target_valid_time_utc": None,  # computed from issue + horizon
-            "issue_timestamp_utc": prediction_result.get("timestamp", now_utc),
+            "region_name": props.get("name") or region.get("name") or cell_id,
+            "country": props.get("country") or region.get("country") or "International Territory",
+            "basin": props.get("basin") or region.get("basin") or "Regional Catchment",
+            "forecast_horizon_hours": horizon,
+            "target_valid_time_utc": target_valid_ts,
+            "issue_timestamp_utc": issue_ts,
+            "timestamp_utc": issue_ts,
+            "created_at": issue_ts,
             "predicted_flood_probability": prob,
             "probability_ci": props.get("confidence_interval"),
             "epistemic_std": props.get("epistemic_std"),
             "risk_tier": tier,
             "trust_flag": trust_flag,
             "model_status": props.get("model_status", "untrained"),
+            "status": "PENDING",
             "data_available": bool(props.get("data_available", False)),
             "missing_factors": list(props.get("missing_factors", []) or []),
             "data_provenance": props.get("data_provenance", {}),
             "primary_driver": props.get("primary_driver"),
             "flood_typology": props.get("flood_typology", {}),
-            "severity": props.get("severity"),
-            "peak_risk_score": float(props.get("peak_risk_score", 0) or 0),
+            "severity": props.get("severity") or ("CRITICAL" if peak_score >= 75 else "HIGH" if peak_score >= 50 else "MODERATE" if peak_score >= 25 else "LOW"),
+            "peak_risk_score": peak_score,
             "forecast_rain_72h_mm": float(props.get("forecast_rain_72h_mm", 0) or 0),
             "river_discharge_m3s": float(props.get("river_discharge_m3s", 0) or 0),
             "discharge_ratio": float(props.get("discharge_ratio", 1) or 1),
@@ -246,6 +302,7 @@ def build_alert_candidates(
             "estimated_exposed_pop": int(props.get("estimated_exposed_pop", 0) or 0),
         }
         candidates.append(candidate)
+        seen_cells.add(cell_id)
 
     logger.info("Built %d alert candidates (%d trusted)", len(candidates), sum(1 for c in candidates if c["trust_flag"]))
     return candidates
@@ -265,41 +322,73 @@ def build_candidates_from_region_records(
 
     candidates: List[Dict[str, Any]] = []
     for r in region_records:
-        prob = r.get("flood_occurrence_probability")
-        tier = _tier_from_probability(prob)
-        if tier == "NORMAL":
+        cell_id = r.get("cell_id") or r.get("id")
+        if not cell_id:
             continue
 
-        trust_flag = model_trusted and tier in ("WARNING", "IMMINENT")
-        cand_id_input = f"{r.get('cell_id')}:{r.get('peak_time_hours', 24)}:{now_utc[:10]}"
+        lat = r.get("lat")
+        lon = r.get("lon")
+        if lat is None or lon is None:
+            fb_lat, fb_lon = _lat_lon_from_cell_id(cell_id)
+            if lat is None:
+                lat = fb_lat
+            if lon is None:
+                lon = fb_lon
+
+        prob = r.get("flood_occurrence_probability")
+        if prob is not None:
+            prob = float(prob)
+        tier = _tier_from_probability(prob)
+
+        peak_score = float(r.get("peak_risk_score", 0) or r.get("flood_risk_score", 0) or 0)
+        if tier == "NORMAL":
+            if peak_score >= 50:
+                tier = "WARNING"
+                prob = round(peak_score / 100.0, 3)
+            elif peak_score >= 25:
+                tier = "WATCH"
+                prob = round(peak_score / 100.0, 3)
+            else:
+                continue
+        elif prob is None or prob == 0:
+            if peak_score >= 25:
+                prob = round(peak_score / 100.0, 3)
+
+        trust_flag = bool(model_trusted and tier in ("WARNING", "IMMINENT"))
+        horizon = int(r.get("peak_time_hours", 24) or 24)
+        cand_id_input = f"{cell_id}:{horizon}:{now_utc[:10]}"
         candidate_id = f"ac_{hashlib.sha256(cand_id_input.encode()).hexdigest()[:12]}"
+        target_valid_ts = _compute_target_valid_time(now_utc, horizon)
 
         candidates.append(
             {
                 "candidate_id": candidate_id,
-                "region_id": r.get("cell_id"),
-                "cell_id": r.get("cell_id"),
-                "lat": r.get("lat"),
-                "lon": r.get("lon"),
-                "region_name": r.get("name"),
-                "country": r.get("country"),
-                "basin": r.get("basin"),
-                "forecast_horizon_hours": int(r.get("peak_time_hours", 24) or 24),
-                "target_valid_time_utc": None,
+                "region_id": cell_id,
+                "cell_id": cell_id,
+                "lat": lat,
+                "lon": lon,
+                "region_name": r.get("name") or cell_id,
+                "country": r.get("country") or "International Territory",
+                "basin": r.get("basin") or "Regional Catchment",
+                "forecast_horizon_hours": horizon,
+                "target_valid_time_utc": target_valid_ts,
                 "issue_timestamp_utc": now_utc,
+                "timestamp_utc": now_utc,
+                "created_at": now_utc,
                 "predicted_flood_probability": prob,
                 "probability_ci": r.get("confidence_interval"),
                 "epistemic_std": r.get("epistemic_std"),
                 "risk_tier": tier,
                 "trust_flag": trust_flag,
                 "model_status": r.get("model_status", "untrained"),
+                "status": "PENDING",
                 "data_available": bool(r.get("data_available", False)),
                 "missing_factors": list(r.get("missing_factors", []) or []),
                 "data_provenance": r.get("data_provenance", {}),
                 "primary_driver": r.get("primary_driver"),
                 "flood_typology": r.get("flood_typology", {}),
-                "severity": r.get("severity"),
-                "peak_risk_score": float(r.get("peak_risk_score", 0) or 0),
+                "severity": r.get("severity") or ("CRITICAL" if peak_score >= 75 else "HIGH" if peak_score >= 50 else "MODERATE" if peak_score >= 25 else "LOW"),
+                "peak_risk_score": peak_score,
                 "forecast_rain_72h_mm": float(r.get("forecast_rain_72h_mm", 0) or 0),
                 "river_discharge_m3s": float(r.get("river_discharge_m3s", 0) or 0),
                 "discharge_ratio": float(r.get("discharge_ratio", 1) or 1),

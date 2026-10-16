@@ -367,7 +367,7 @@ class BackgroundScanProcessor:
         historical_labels: Any,
     ) -> Dict[str, Any]:
         # Lazy import to avoid circular dependency
-        from global_prediction_engine import haversine_km, FLOOD_PRONE_ANCHORS
+        from global_prediction_engine import haversine_km, FLOOD_PRONE_ANCHORS, _cell_id_for, _continent_for_coords
 
         lat, lon = obs.lat, obs.lon
         score = rs.risk_score_0_100
@@ -445,24 +445,47 @@ class BackgroundScanProcessor:
         area_est = max(0.0, cell_area_km2 * (score / 100.0) * 0.5)
         exposed_pop = int(round(area_est * 120.0 * 0.4))
 
-        # Name from GDACS/anchors
+        # Name from GDACS/anchors/geographic region
         name = cell.cell_id
-        country = "International Waters"
+        country = "International Territory"
         continent = "Global Grid Cell"
         basin = "Grid Catchment"
-        for ev in gdacs_events:
-            if haversine_km(lat, lon, ev["lat"], ev["lon"]) < 0.5:
-                name = ev.get("eventname") or f"GDACS Alert ({ev.get('country')})"
-                country = ev.get("country", country)
-                basin = "Active Alert Catchment"
-                break
+        matched = False
+
         for anc in FLOOD_PRONE_ANCHORS:
-            if haversine_km(lat, lon, anc["lat"], anc["lon"]) < 0.5:
+            anc_cell_id = _cell_id_for(anc["lat"], anc["lon"])
+            if cell.cell_id == anc_cell_id or haversine_km(lat, lon, anc["lat"], anc["lon"]) <= 35.0:
                 name = anc["name"]
                 country = anc["country"]
                 continent = anc["continent"]
                 basin = anc["basin"]
+                matched = True
                 break
+
+        if not matched:
+            for ev in gdacs_events:
+                ev_cell_id = _cell_id_for(ev["lat"], ev["lon"])
+                if cell.cell_id == ev_cell_id or haversine_km(lat, lon, ev["lat"], ev["lon"]) <= 35.0:
+                    name = ev.get("eventname") or f"GDACS Alert ({ev.get('country', 'Active Alert')})"
+                    country = ev.get("country", "Active Alert Region")
+                    continent = "Global Grid Cell"
+                    basin = f"{ev.get('country', 'Active Alert')} Catchment"
+                    matched = True
+                    break
+
+        if not matched:
+            continent = _continent_for_coords(lat, lon)
+            lat_dir = "N" if lat >= 0 else "S"
+            lon_dir = "E" if lon >= 0 else "W"
+            coord_str = f"{abs(lat):.2f}°{lat_dir}, {abs(lon):.2f}°{lon_dir}"
+            if continent != "Global":
+                name = f"{continent} Grid ({coord_str})"
+                country = f"{continent} Region"
+                basin = f"{continent} Catchment"
+            else:
+                name = f"Grid Cell ({coord_str})"
+                country = "Coastal / Marine Zone" if obs.obs_is_coastal else "International Waters"
+                basin = "Local Catchment"
 
         # Historical flood label from DFO
         hist_label, hist_event_id, hist_details = historical_labels.label_cell(

@@ -113,6 +113,25 @@ def _cell_id_for(lat: float, lon: float) -> str:
     return f"grid_{li}_{lj}"
 
 
+def _continent_for_coords(lat: float, lon: float) -> str:
+    """Approximate continent classification from latitude and longitude."""
+    if -35.0 <= lat <= 37.0 and -20.0 <= lon <= 55.0:
+        return "Africa"
+    if 35.0 <= lat <= 72.0 and -25.0 <= lon <= 45.0:
+        return "Europe"
+    if lat >= 5.0 and 45.0 <= lon <= 180.0:
+        return "Asia"
+    if -11.0 <= lat < 5.0 and 95.0 <= lon <= 150.0:
+        return "Asia"
+    if 10.0 <= lat <= 75.0 and -170.0 <= lon <= -50.0:
+        return "North America"
+    if -60.0 <= lat <= 15.0 and -90.0 <= lon <= -30.0:
+        return "South America"
+    if -50.0 <= lat <= 0.0 and 110.0 <= lon <= 180.0:
+        return "Oceania"
+    return "Global"
+
+
 class GlobalPredictionEngine:
     def __init__(
         self,
@@ -309,24 +328,47 @@ class GlobalPredictionEngine:
         area_est = max(0.0, cell_area_km2 * (score / 100.0) * 0.5)
         exposed_pop = int(round(area_est * 120.0 * 0.4))
 
-        # Name from anchor/GDACS if matched, else grid cell
+        # Name from anchor/GDACS if matched, else geographic region
         name = cell.cell_id
-        country = "International Waters"
+        country = "International Territory"
         continent = "Global Grid Cell"
         basin = "Grid Catchment"
-        for ev in gdacs_events:
-            if haversine_km(lat, lon, ev["lat"], ev["lon"]) < 0.5:
-                name = ev.get("eventname") or f"GDACS Alert ({ev.get('country')})"
-                country = ev.get("country", country)
-                basin = "Active Alert Catchment"
-                break
+        matched = False
+
         for anc in FLOOD_PRONE_ANCHORS:
-            if haversine_km(lat, lon, anc["lat"], anc["lon"]) < 0.5:
+            anc_cell_id = _cell_id_for(anc["lat"], anc["lon"])
+            if cell.cell_id == anc_cell_id or haversine_km(lat, lon, anc["lat"], anc["lon"]) <= 35.0:
                 name = anc["name"]
                 country = anc["country"]
                 continent = anc["continent"]
                 basin = anc["basin"]
+                matched = True
                 break
+
+        if not matched:
+            for ev in gdacs_events:
+                ev_cell_id = _cell_id_for(ev["lat"], ev["lon"])
+                if cell.cell_id == ev_cell_id or haversine_km(lat, lon, ev["lat"], ev["lon"]) <= 35.0:
+                    name = ev.get("eventname") or f"GDACS Alert ({ev.get('country', 'Active Alert')})"
+                    country = ev.get("country", "Active Alert Region")
+                    continent = "Global Grid Cell"
+                    basin = f"{ev.get('country', 'Active Alert')} Catchment"
+                    matched = True
+                    break
+
+        if not matched:
+            continent = _continent_for_coords(lat, lon)
+            lat_dir = "N" if lat >= 0 else "S"
+            lon_dir = "E" if lon >= 0 else "W"
+            coord_str = f"{abs(lat):.2f}°{lat_dir}, {abs(lon):.2f}°{lon_dir}"
+            if continent != "Global":
+                name = f"{continent} Grid ({coord_str})"
+                country = f"{continent} Region"
+                basin = f"{continent} Catchment"
+            else:
+                name = f"Grid Cell ({coord_str})"
+                country = "Coastal / Marine Zone" if obs.obs_is_coastal else "International Waters"
+                basin = "Local Catchment"
 
         # Historical verified flood label from DFO archive
         hist_label, hist_event_id, hist_details = self.historical_labels.label_cell(
@@ -679,19 +721,24 @@ class GlobalPredictionEngine:
                 model_auc=model_auc,
             )
 
-            # Save alert candidates to MongoDB
+            # Save alert candidates to MongoDB (upsert to keep latest scan fresh)
             alert_docs = []
             for c in candidates:
                 alert_docs.append({
                     **c,
                     "scan_id": scan_id,
                     "created_at": now_iso,
+                    "timestamp_utc": now_iso,
                 })
             try:
                 if self.mongo_store is not None and self.mongo_store.is_connected:
                     alert_col = self.mongo_store.db["global_mesh_alert_candidates"]
-                    if alert_docs:
-                        alert_col.insert_many(alert_docs)
+                    for doc in alert_docs:
+                        alert_col.update_one(
+                            {"candidate_id": doc["candidate_id"]},
+                            {"$set": doc},
+                            upsert=True,
+                        )
             except Exception as exc:
                 logger.warning("Failed to save alert candidates: %s", exc)
         except Exception as exc:
