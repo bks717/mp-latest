@@ -259,6 +259,12 @@ class GlobalMeshRiskScorer:
     def score_cell(self, obs: CellObservation, model_pred: Optional[ModelPrediction] = None) -> RiskScore:
         computed_at = datetime.now(timezone.utc).isoformat()
 
+        # Obtain GRU prediction if a model is available and none was passed in.
+        # This ensures calibrated flood probability is computed when the model
+        # is trained and validated, even if the caller doesn't supply it.
+        if model_pred is None and self.model is not None:
+            model_pred = self.model.predict(obs)
+
         # --- Factor indices ---
         factor_specs: List[Tuple[str, str, str, str]] = [
             ("rainfall", "Rainfall (observed 72h + forecast)", "mm index",

@@ -32,6 +32,16 @@ from typing import Dict, List, Any, Tuple
 logger = logging.getLogger("FloodRiskEngine")
 logging.basicConfig(level=logging.INFO)
 
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """Safely convert a value to float, returning default if None or invalid."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
 class FloodRiskEngine:
     """
     Transparent multi-factor flood risk scoring and temporal trajectory engine.
@@ -117,7 +127,7 @@ class FloodRiskEngine:
                 "satellite_verification": "ACTIVE_SAR_EVIDENCE_INCORPORATED"
             }
             # If SAR detects significant active flooding, ensure minimum floor for current risk
-            if satellite_evidence.get("flooded_area_km2", 0.0) > 1.0:
+            if _safe_float(satellite_evidence.get("flooded_area_km2"), 0.0) > 1.0:
                 current_score = max(current_score, 65.0)
                 peak_score = max(peak_score, current_score)
 
@@ -144,16 +154,16 @@ class FloodRiskEngine:
 
     def _calculate_horizon_score(self, horizon: dict, terrain: dict, infra: dict) -> dict:
         """Calculates 0-100 score for a specific forecast horizon"""
-        cum_rain = float(horizon.get("cumulative_forecast_rain_mm", 0.0))
-        hourly_rain = float(horizon.get("hourly_precip_mm", 0.0))
-        q_discharge = float(horizon.get("river_discharge_m3s", 100.0))
-        q_ratio = float(horizon.get("river_discharge_ratio", 1.0))
-        soil_m = float(horizon.get("soil_moisture_surface", 0.30))
+        cum_rain = _safe_float(horizon.get("cumulative_forecast_rain_mm"), 0.0)
+        hourly_rain = _safe_float(horizon.get("hourly_precip_mm"), 0.0)
+        q_discharge = _safe_float(horizon.get("river_discharge_m3s"), 100.0)
+        q_ratio = _safe_float(horizon.get("river_discharge_ratio"), 1.0)
+        soil_m = _safe_float(horizon.get("soil_moisture_surface"), 0.30)
 
-        elev = float(terrain.get("elevation_m", 80.0))
-        slope = float(terrain.get("slope_pct", 1.5))
-        twi = float(terrain.get("topographic_wetness_index", 9.0))
-        impervious = float(infra.get("estimated_impervious_pct", 20.0))
+        elev = _safe_float(terrain.get("elevation_m"), 80.0)
+        slope = _safe_float(terrain.get("slope_pct"), 1.5)
+        twi = _safe_float(terrain.get("topographic_wetness_index"), 9.0)
+        impervious = _safe_float(infra.get("estimated_impervious_pct"), 20.0)
 
         # 1. Precipitation Dynamic Sub-Score (0 - 35 points)
         # 100mm forecast rain over horizon -> 25 points; intense hourly burst > 15mm/h -> up to 10 points
@@ -220,12 +230,12 @@ class FloodRiskEngine:
         """
         Decomposes the predicted risk into understandable factor contributions
         """
-        cum_rain = float(horizon.get("cumulative_forecast_rain_mm", 0.0))
-        q_ratio = float(horizon.get("river_discharge_ratio", 1.0))
-        soil_m = float(horizon.get("soil_moisture_surface", 0.30))
-        slope = float(terrain.get("slope_pct", 1.5))
-        elev = float(terrain.get("elevation_m", 80.0))
-        impervious = float(infra.get("estimated_impervious_pct", 20.0))
+        cum_rain = _safe_float(horizon.get("cumulative_forecast_rain_mm"), 0.0)
+        q_ratio = _safe_float(horizon.get("river_discharge_ratio"), 1.0)
+        soil_m = _safe_float(horizon.get("soil_moisture_surface"), 0.30)
+        slope = _safe_float(terrain.get("slope_pct"), 1.5)
+        elev = _safe_float(terrain.get("elevation_m"), 80.0)
+        impervious = _safe_float(infra.get("estimated_impervious_pct"), 20.0)
 
         drivers = []
 
@@ -289,15 +299,15 @@ class FloodRiskEngine:
         This ensures risk_score is never silently zero when conditions data exists.
         """
         # Extract available data from snapshot factors
-        rain_24h = float(snapshot.get("rainfall_24h", {}).get("value", 0.0) or 0.0)
-        rain_72h = float(snapshot.get("rainfall_72h", {}).get("value", 0.0) or 0.0)
-        fwd_rain = float(snapshot.get("rainfall_forecast_24h", {}).get("value", 0.0) or 0.0)
-        intensity = float(snapshot.get("rainfall_intensity", {}).get("value", 0.0) or 0.0)
-        cur_q = float(snapshot.get("river_discharge", {}).get("value", 100.0) or 100.0)
-        mean_q = float(snapshot.get("historical_mean_discharge", {}).get("value", 80.0) or 80.0)
+        rain_24h = _safe_float(snapshot.get("rainfall_24h", {}).get("value"), 0.0)
+        rain_72h = _safe_float(snapshot.get("rainfall_72h", {}).get("value"), 0.0)
+        fwd_rain = _safe_float(snapshot.get("rainfall_forecast_24h", {}).get("value"), 0.0)
+        intensity = _safe_float(snapshot.get("rainfall_intensity", {}).get("value"), 0.0)
+        cur_q = _safe_float(snapshot.get("river_discharge", {}).get("value"), 100.0)
+        mean_q = _safe_float(snapshot.get("historical_mean_discharge", {}).get("value"), 80.0)
         q_ratio = cur_q / max(mean_q, 1.0)
-        soil_m = float(snapshot.get("soil_moisture_surface", {}).get("value", 0.30) or 0.30)
-        elev = float(terrain.get("elevation_m") or snapshot.get("elevation", {}).get("value", 80.0) or 80.0)
+        soil_m = _safe_float(snapshot.get("soil_moisture_surface", {}).get("value"), 0.30)
+        elev = _safe_float(terrain.get("elevation_m"), _safe_float(snapshot.get("elevation", {}).get("value"), 80.0))
 
         logger.warning(f"⚠️ Forecast horizons empty — synthesizing fallback from snapshot "
                        f"(rain24h={rain_24h}mm, Q={cur_q}m³/s, ratio={q_ratio:.2f}, SM={soil_m})")
@@ -315,11 +325,11 @@ class FloodRiskEngine:
                 "timestamp": None,
                 "hourly_precip_mm": intensity if h_hours == 0 else (fwd_rain / 24.0),
                 "cumulative_forecast_rain_mm": round(cum_rain, 1),
-                "temperature_c": float(snapshot.get("temperature", {}).get("value", 25.0) or 25.0),
-                "relative_humidity_pct": float(snapshot.get("humidity", {}).get("value", 75.0) or 75.0),
-                "surface_pressure_hpa": float(snapshot.get("atmospheric_pressure", {}).get("value", 1013.0) or 1013.0),
+                "temperature_c": _safe_float(snapshot.get("temperature", {}).get("value"), 25.0),
+                "relative_humidity_pct": _safe_float(snapshot.get("humidity", {}).get("value"), 75.0),
+                "surface_pressure_hpa": _safe_float(snapshot.get("atmospheric_pressure", {}).get("value"), 1013.0),
                 "soil_moisture_surface": min(0.50, round(soil_m + (cum_rain * 0.0015), 3)),
-                "soil_moisture_root": float(snapshot.get("soil_moisture_root", {}).get("value", 0.32) or 0.32),
+                "soil_moisture_root": _safe_float(snapshot.get("soil_moisture_root", {}).get("value"), 0.32),
                 "river_discharge_m3s": round(projected_q, 1),
                 "river_discharge_ratio": round(projected_q / max(mean_q, 1.0), 2)
             })

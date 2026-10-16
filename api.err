@@ -1,0 +1,51 @@
+INFO:DisasterPredictionModel:Loaded trained MultiFactorFloodPredictor from F:\mp-latest\disaster-ai-api\flood_prediction_model.pth
+INFO:GlobalGridSystem:Initializing global grid: 480×1440 = 691200 cells at 0.25° resolution
+INFO:GlobalGridSystem:Global grid system ready (lazy initialization mode)
+INFO:GlobalMeshFloodRiskModel:Model loaded from F:\mp-latest\disaster-ai-api\global_mesh\models\flood_risk_gru.pth (trained=True)
+INFO:GlobalPredictionEngine:✅ Global Mesh GRU flood-risk model loaded: F:\mp-latest\disaster-ai-api\global_mesh\models\flood_risk_gru.pth
+INFO:GlobalMeshMongoStore:✅ Global Mesh MongoDB connected: mongodb://localhost:27017/floodwatch
+INFO:GlobalMeshHistoricalLabels:Loaded DFO archive: 4029 events
+INFO:GlobalMeshHistoricalLabels:DFO labels ready: 4029 verified flood events (1985-01-01T00:00:00 to NaT)
+INFO:TCNAttentionForecaster:✅ Loaded trained TCNAttentionForecaster from F:\mp-latest\disaster-ai-api\tcn_flood_forecaster.pth
+INFO:DisasterPredictionModel:Loaded trained MultiFactorFloodPredictor from F:\mp-latest\disaster-ai-api\flood_prediction_model.pth
+INFO:DeepEnsembleEngine:Loaded base model weights from F:\mp-latest\disaster-ai-api\flood_prediction_model.pth
+INFO:DeepEnsembleEngine:✅ Deep Ensemble initialized with 5 active DL members
+INFO:TCNAttentionForecaster:✅ Loaded trained TCNAttentionForecaster from F:\mp-latest\disaster-ai-api\tcn_flood_forecaster.pth
+INFO:DisasterPredictionModel:Loaded trained MultiFactorFloodPredictor from F:\mp-latest\disaster-ai-api\flood_prediction_model.pth
+INFO:DeepEnsembleEngine:Loaded base model weights from F:\mp-latest\disaster-ai-api\flood_prediction_model.pth
+INFO:DeepEnsembleEngine:✅ Deep Ensemble initialized with 5 active DL members
+INFO:     Started server process [37584]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:TemporalDataEngine:Ingesting temporal data sequence for [23.7, 90.41] (radius=6.0km)...
+WARNING:SpatialHazardGenerator:OSM fetch failed on https://overpass-api.de/api/interpreter: HTTPSConnectionPool(host='overpass-api.de', port=443): Read timed out. (read timeout=4.0)
+INFO:SpatialHazardGenerator:Loading OSM road network for bbox: (90.31081, 23.630489999999998, 90.46, 23.78901) (profile=vehicle, net=drive)
+ERROR:SpatialHazardGenerator:Failed to load OSM road network: HTTPSConnectionPool(host='overpass-api.de', port=443): Read timed out. (read timeout=7)
+WARNING:SpatialHazardGenerator:Flood-aware routing failed, using fallback: HTTPSConnectionPool(host='overpass-api.de', port=443): Read timed out. (read timeout=7)
+INFO:RealDataCollector:Collecting real-world flood factors for coordinates [23.7, 90.41]...
+WARNING:RealDataCollector:Overpass https://overpass-api.de/api/interpreter failed: HTTPSConnectionPool(host='overpass-api.de', port=443): Read timed out. (read timeout=3.5)
+INFO:RealDataCollector:Collecting real-world flood factors for coordinates [23.7, 90.41]...
+WARNING:RealDataCollector:Overpass https://overpass-api.de/api/interpreter failed: HTTPSConnectionPool(host='overpass-api.de', port=443): Read timed out. (read timeout=3.5)
+INFO:SpatialHazardGenerator:Using cached OSM features for bbox 90.351_23.646_90.469_23.754
+INFO:SpatialHazardGenerator:Loading OSM road network for bbox: (90.31081, 23.630489999999998, 90.46, 23.78901) (profile=vehicle, net=drive)
+ERROR:SpatialHazardGenerator:Failed to load OSM road network: HTTPSConnectionPool(host='overpass-api.de', port=443): Read timed out. (read timeout=7)
+WARNING:SpatialHazardGenerator:Flood-aware routing failed, using fallback: HTTPSConnectionPool(host='overpass-api.de', port=443): Read timed out. (read timeout=7)
+ERROR:asyncio:Task exception was never retrieved
+future: <Task finished name='Task-24' coro=<IocpProactor.accept.<locals>.accept_coro() done, defined at C:\Python314\Lib\asyncio\windows_events.py:564> exception=OSError(22, 'The specified network name is no longer available', None, 64, None)>
+Traceback (most recent call last):
+  File "C:\Python314\Lib\asyncio\windows_events.py", line 567, in accept_coro
+    await future
+  File "C:\Python314\Lib\asyncio\windows_events.py", line 807, in _poll
+    value = callback(transferred, key, ov)
+  File "C:\Python314\Lib\asyncio\windows_events.py", line 556, in finish_accept
+    ov.getresult()
+    ~~~~~~~~~~~~^^
+OSError: [WinError 64] The specified network name is no longer available
+ERROR:asyncio:Accept failed on a socket
+socket: <asyncio.TransportSocket fd=1568, family=2, type=1, proto=6, laddr=('0.0.0.0', 8000)>
+Traceback (most recent call last):
+  File "C:\Python314\Lib\asyncio\proactor_events.py", line 840, in loop
+    conn, addr = f.result()
+                 ~~~~~~~~^^
+OSError: [WinError 64] The specified network name is no longer available

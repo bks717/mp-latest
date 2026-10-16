@@ -173,7 +173,7 @@ router.post('/cap/export', async (req, res) => {
   <identifier>${alertIdentifier}</identifier>
   <sender>global-mesh@floodwatch.ai</sender>
   <sent>${now}</sent>
-  <status>Actual</status>
+  <status>Exercise</status>
   <msgType>Alert</msgType>
   <scope>Public</scope>
   <references></references>
@@ -183,7 +183,6 @@ ${approved.map(a => `    <info>
       <category>Met</category>
       <event>Flood Alert</event>
       <responseType>${a.risk_tier === 'IMMINENT' ? 'Evacuate' : 'Prepare'}</responseType>
-      <priority>${a.risk_tier === 'IMMINENT' ? 'Immediate' : 'Expected'}</priority>
       <urgency>${a.risk_tier === 'IMMINENT' ? 'Immediate' : 'Expected'}</urgency>
       <severity>${a.severity || 'Moderate'}</severity>
       <certainty>${a.trust_flag ? 'Observed' : 'Likely'}</certainty>
@@ -192,7 +191,7 @@ ${approved.map(a => `    <info>
       <instruction>Monitor local conditions and follow official evacuation instructions.</instruction>
       <area>
         <areaDesc>${a.country || 'Unknown'}, ${a.basin || 'Unknown'}</areaDesc>
-        <polygon>${(a.lat||0).toFixed(4)} ${(a.lon||0).toFixed(4)}</polygon>
+        <polygon>${(a.lon-0.01).toFixed(4)} ${(a.lat-0.01).toFixed(4)} ${(a.lon+0.01).toFixed(4)} ${(a.lat-0.01).toFixed(4)} ${(a.lon+0.01).toFixed(4)} ${(a.lat+0.01).toFixed(4)} ${(a.lon-0.01).toFixed(4)} ${(a.lat+0.01).toFixed(4)} ${(a.lon-0.01).toFixed(4)} ${(a.lat-0.01).toFixed(4)}</polygon>
         <altitude>0</altitude>
         <ceiling>0</ceiling>
       </area>

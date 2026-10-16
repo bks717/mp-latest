@@ -160,7 +160,10 @@ class GlobalPredictionEngine:
                 "Run global_mesh/train_global_mesh_model.py to train.",
                 model_path,
             )
-        self.risk_scorer = GlobalMeshRiskScorer(model=self.risk_model)
+        self.risk_scorer = GlobalMeshRiskScorer(
+            model=self.risk_model,
+            model_validated=self.risk_model.is_validated(),
+        )
 
         # River-router for river-network-aware typology classification
         self.router = get_river_router()

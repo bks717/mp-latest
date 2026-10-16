@@ -194,18 +194,17 @@ def train_model(
             json.dump(manifest, f, indent=2)
         return manifest
 
-    # Split by index to keep train/val/test disjoint
-    import random
-    random.seed(42)
-    idx = list(range(n))
-    random.shuffle(idx)
+    # ── Geographical split (prevents spatial leakage) ──────────────────────
+    # Sort samples by longitude then latitude, split into contiguous
+    # geographical bands so nearby cells don't appear in both train and test.
+    order = sorted(range(n), key=lambda i: (metadata_list[i].get("lon", 0.0), metadata_list[i].get("lat", 0.0)))
     n_test = max(1, int(n * 0.2))
     n_val = max(1, int(n * 0.2))
     n_train = n - n_val - n_test
 
-    test_idx = set(idx[:n_test])
-    val_idx = set(idx[n_test:n_test + n_val])
-    train_idx = set(idx[n_test + n_val:])
+    test_idx = set(order[:n_test])
+    val_idx = set(order[n_test:n_test + n_val])
+    train_idx = set(order[n_test + n_val:])
 
     X_train_dyn = np.stack([sequences[i] for i in sorted(train_idx)]).astype(np.float32)
     X_train_sta = np.stack([statics[i] for i in sorted(train_idx)]).astype(np.float32)
@@ -252,9 +251,15 @@ def train_model(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("Training on compute engine: %s", device)
 
-    model = FloodRiskModel().to(device)
+    wrapper = FloodRiskModel(device=device)
+    model = wrapper.model  # underlying nn.Module, already on correct device
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-    criterion = nn.BCEWithLogitsLoss()
+    # Class weighting for imbalance: positive class gets higher weight
+    n_pos_train = int(sum(y_train))
+    n_neg_train = len(y_train) - n_pos_train
+    pos_weight = n_neg_train / max(n_pos_train, 1)
+    logger.info("Class weights: pos_weight=%.2f (%d pos, %d neg in train)", pos_weight, n_pos_train, n_neg_train)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight], device=device))
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5
     )
@@ -320,7 +325,7 @@ def train_model(
     all_preds: List[float] = []
     all_targets: List[int] = []
     with torch.no_grad():
-        model.model.train()  # MC dropout for uncertainty reporting
+        model.train()  # MC dropout for uncertainty reporting
         for xb_dyn, xb_sta, yb in test_loader:
             xb_dyn = xb_dyn.to(device)
             xb_sta = xb_sta.to(device)
@@ -329,7 +334,7 @@ def train_model(
             probs = torch.sigmoid(logits).cpu().numpy().tolist()
             all_preds.extend(probs)
             all_targets.extend(yb.cpu().numpy().astype(int).tolist())
-        model.model.eval()
+        model.eval()
 
     model_eval = evaluate_probabilistic_model(all_preds, all_targets, model_name="global_mesh_gru")
 
@@ -351,9 +356,10 @@ def train_model(
         "auc_improvement_over_climatology": round(model_eval.roc_auc - clim_eval.roc_auc, 4),
     }
 
-    model.model.eval()
-    model.set_validated(deployed)
-    model.save(MODEL_PATH)
+    model.eval()
+    wrapper._trained = True  # mark wrapper as trained (training loop ran on wrapper.model)
+    wrapper.set_validated(deployed)
+    wrapper.save(MODEL_PATH)
 
     if deployed:
         manifest["deploy_reason"] = (

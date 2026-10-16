@@ -436,9 +436,9 @@ class TemporalDataEngine:
         recurrence_5yr = glofas.get("recurrence_5yr_m3s", mean_q * 1.85)
         recurrence_20yr = glofas.get("recurrence_20yr_m3s", mean_q * 2.40)
 
-        elevation = topo.get("elevation_m", 80.0)
-        slope = topo.get("slope_pct", 1.2)
-        twi = topo.get("topographic_wetness_index", 9.0)
+        elevation = topo.get("elevation_m", 80.0) or 80.0
+        slope = topo.get("slope_pct", 1.2) or 1.2
+        twi = topo.get("topographic_wetness_index", 9.0) or 9.0
 
         is_coastal = elevation < 15.0 and abs(lat) < 60.0
 

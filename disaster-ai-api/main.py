@@ -1298,6 +1298,24 @@ async def get_latest_global_prediction():
         timeout=120.0
     )
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for the AI engine."""
+    return {
+        "status": "healthy",
+        "service": "disaster-ai-api",
+        "version": "2.0",
+        "models_loaded": {
+            "sar_unet": "unet_b3.pth",
+            "multifactor_predictor": "flood_prediction_model.pth",
+            "streamflow_lstm": "streamflow_forecast_lstm.pth",
+            "tcn_attention": "tcn_flood_forecaster.pth",
+            "deep_ensemble": True,
+            "global_mesh_gru": global_engine.risk_model.is_trained(),
+        },
+    }
+
+
 @app.get("/live-factors")
 async def get_live_factors(lat: float, lng: float, radius_km: float = 6.0):
     try:
