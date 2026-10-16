@@ -184,6 +184,12 @@ def build_alert_candidates(
 
         region = region_by_cell.get(cell_id, props)
 
+        # Get lat/lng from GeoJSON geometry coordinates [lon, lat]
+        geometry = feature.get("geometry", {}) or {}
+        coordinates = geometry.get("coordinates", [None, None]) or [None, None]
+        geojson_lat = coordinates[1] if len(coordinates) > 1 else None
+        geojson_lon = coordinates[0] if len(coordinates) > 0 else None
+
         prob = props.get("flood_occurrence_probability")
         tier = _tier_from_probability(prob)
 
