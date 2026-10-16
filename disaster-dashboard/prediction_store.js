@@ -12,9 +12,13 @@ const COLLECTION_NAME = 'predictions';
 const GLOBAL_COLLECTION_NAME = 'global_predictions';
 const VERIFICATIONS_COLLECTION_NAME = 'forecast_verifications';
 const ACTION_PLANS_COLLECTION_NAME = 'action_plans';
+const IMPACT_COLLECTION_NAME = 'impact_assessments';
 
 let actionPlansCol = null;
 const actionPlanMemoryFallback = [];
+
+let impactCol = null;
+const impactMemoryFallback = [];
 
 let client = null;
 let db = null;
@@ -44,6 +48,10 @@ async function initMongo() {
         actionPlansCol = db.collection(ACTION_PLANS_COLLECTION_NAME);
         await actionPlansCol.createIndex({ timestamp: -1 });
         await actionPlansCol.createIndex({ 'coordinates.lat': 1, 'coordinates.lng': 1 });
+
+        impactCol = db.collection(IMPACT_COLLECTION_NAME);
+        await impactCol.createIndex({ timestamp: -1 });
+        await impactCol.createIndex({ 'coordinates.lat': 1, 'coordinates.lng': 1 });
 
         // Create indexes for efficient querying
         await predictionsCol.createIndex({ timestamp: -1 });
@@ -549,7 +557,60 @@ async function getActionPlanHistory(query = {}) {
     return actionPlanMemoryFallback.slice(0, parseInt(limit, 10));
 }
 
+/**
+ * Saves an authentic multi-scale impact assessment document
+ */
+async function saveImpactAssessment(doc) {
+    const timestamp = doc.timestamp ? new Date(doc.timestamp) : new Date();
+    const record = {
+        ...doc,
+        timestamp,
+        created_at: new Date()
+    };
+
+    if (isConnected && impactCol) {
+        try {
+            const result = await impactCol.insertOne(record);
+            return { ...record, _id: result.insertedId };
+        } catch (err) {
+            console.error('Failed to insert impact assessment in MongoDB:', err.message);
+        }
+    }
+
+    const fallbackRecord = { ...record, _id: new ObjectId() };
+    impactMemoryFallback.unshift(fallbackRecord);
+    if (impactMemoryFallback.length > 50) impactMemoryFallback.pop();
+    return fallbackRecord;
+}
+
+/**
+ * Retrieves impact assessment history
+ */
+async function getImpactAssessmentHistory(query = {}) {
+    const { lat, lng, limit = 10 } = query;
+    const filter = {};
+
+    if (lat != null && lng != null) {
+        const numLat = parseFloat(lat);
+        const numLng = parseFloat(lng);
+        filter['coordinates.lat'] = { $gte: numLat - 0.25, $lte: numLat + 0.25 };
+        filter['coordinates.lng'] = { $gte: numLng - 0.25, $lte: numLng + 0.25 };
+    }
+
+    if (isConnected && impactCol) {
+        try {
+            return await impactCol.find(filter).sort({ timestamp: -1 }).limit(parseInt(limit, 10)).toArray();
+        } catch (err) {
+            console.error('Failed to fetch impact assessments from MongoDB:', err.message);
+        }
+    }
+
+    return impactMemoryFallback.slice(0, parseInt(limit, 10));
+}
+
 module.exports = {
+    saveImpactAssessment,
+    getImpactAssessmentHistory,
     saveActionPlan,
     getActionPlanHistory,
     initMongo,

@@ -957,21 +957,62 @@ app.post('/api/sar/multiscale', async (req, res) => {
 
 app.post('/api/impact/multiscale', async (req, res) => {
     try {
-        const { lat, lng } = req.body;
+        const { lat, lng, depth, estimated_depth_m, sar_features } = req.body;
         if (lat == null || lng == null) {
             return res.status(400).json({ error: 'lat and lng coordinates are required.' });
         }
-        console.log(`📊 Multi-Scale Impact assessment request for [${lat}, ${lng}]...`);
-        const depthVal = parseFloat(req.body.depth || req.body.estimated_depth_m || 1.0);
+        const depthVal = parseFloat(depth || estimated_depth_m || 1.0);
+        const sarCount = Array.isArray(sar_features) ? sar_features.length : 0;
+        console.log(`📊 Multi-Scale Impact assessment request for [${lat}, ${lng}] (depth=${depthVal}m, SAR_features=${sarCount})...`);
+
         const aiResponse = await axios.post(
             AI_API_URL + '/api/impact-multiscale',
-            { lat: parseFloat(lat), lng: parseFloat(lng), depth: depthVal },
+            {
+                lat: parseFloat(lat),
+                lng: parseFloat(lng),
+                depth: depthVal,
+                sar_features: Array.isArray(sar_features) ? sar_features : null
+            },
             { timeout: 600_000 }
         );
+
+        // Persist authentic assessment snapshot into isolated MongoDB collection
+        if (aiResponse.data && aiResponse.data.status === 'success') {
+            try {
+                await predictionStore.saveImpactAssessment({
+                    coordinates: { lat: parseFloat(lat), lng: parseFloat(lng) },
+                    depth_m: depthVal,
+                    combined_summary: aiResponse.data.combined_summary,
+                    risk_assessment: aiResponse.data.risk_assessment,
+                    stages: (aiResponse.data.stages || []).map(s => ({
+                        extent_km: s.extent_km,
+                        stage_label: s.stage_label,
+                        cumulative_total: s.cumulative_total,
+                        scientific_risk_assessment: s.scientific_risk_assessment
+                    })),
+                    priority_zones_count: aiResponse.data.priority_zones?.length || 0,
+                    data_provenance: aiResponse.data.data_provenance
+                });
+            } catch (saveErr) {
+                console.warn('⚠️ Could not persist impact assessment to MongoDB:', saveErr.message);
+            }
+        }
+
         res.json(aiResponse.data);
     } catch (error) {
         console.error('🚨 Error in multi-scale Impact proxy:', error.message);
         res.status(500).json({ error: 'Failed to execute multi-scale impact assessment: ' + error.message });
+    }
+});
+
+app.get('/api/impact/history', async (req, res) => {
+    try {
+        const { lat, lng, limit } = req.query;
+        const history = await predictionStore.getImpactAssessmentHistory({ lat, lng, limit: limit || 10 });
+        res.json({ history });
+    } catch (error) {
+        console.error('🚨 Error fetching impact history:', error.message);
+        res.status(500).json({ error: 'Failed to fetch impact assessment history: ' + error.message });
     }
 });
 
