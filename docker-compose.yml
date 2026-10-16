@@ -34,7 +34,7 @@ services:
       - ./disaster-dashboard:/app
     environment:
       - API_URL=http://api:8000
-      - MONGO_URI=mongodb://mongodb:27017/floodwatch
+      - MONGODB_URI=mongodb://mongodb:27017/floodwatch
       - MONGODB_DB=floodwatch
     depends_on:
       - api
