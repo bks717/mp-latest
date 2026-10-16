@@ -9,7 +9,7 @@ services:
     restart: unless-stopped
 
   api:
-    build: 
+    build:
       context: ./disaster-ai-api
     container_name: floodwatch-api
     ports:
@@ -18,10 +18,14 @@ services:
       - ./disaster-ai-api:/app
     environment:
       - PYTHONUNBUFFERED=1
+      - MONGODB_URI=mongodb://mongodb:27017/floodwatch
+      - MONGODB_DB=floodwatch
+    depends_on:
+      - mongodb
     restart: unless-stopped
 
   dashboard:
-    build: 
+    build:
       context: ./disaster-dashboard
     container_name: floodwatch-dashboard
     ports:
@@ -31,6 +35,7 @@ services:
     environment:
       - API_URL=http://api:8000
       - MONGO_URI=mongodb://mongodb:27017/floodwatch
+      - MONGODB_DB=floodwatch
     depends_on:
       - api
       - mongodb

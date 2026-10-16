@@ -17,7 +17,7 @@ const { AlertPolicyEngine } = require('./policy_engine');
 
 const router = express.Router();
 
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017';
 const DB_NAME = process.env.MONGO_DB || 'floodwatch';
 
 let client, db, alertsCol, deviceRegistry, policyEngine;
