@@ -33,8 +33,8 @@ except ImportError:
 logger = logging.getLogger("GlobalMeshMongoStore")
 logging.basicConfig(level=logging.INFO)
 
-MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
-DB_NAME = os.environ.get("MONGO_DB", "floodwatch")
+MONGO_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
+DB_NAME = os.environ.get("MONGODB_DB", "floodwatch")
 
 # Collection names — all prefixed with "global_mesh_" for isolation
 SCANS_COLLECTION = "global_mesh_scans"
