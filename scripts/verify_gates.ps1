@@ -56,14 +56,14 @@ if ($Phase -eq '1') {
     else {
         Write-Pass 'reports\phase1\ directory present'
     }
-    $ingestion = Join-Path $repoRoot 'disaster-ai-api\global_mesh\data_ingestion.py'
-    if (-not (Test-Path $ingestion)) { Write-Fail 'global_mesh\data_ingestion.py not found' }
+    $ingestion = Join-Path $repoRoot 'disaster-ai-api\global_mesh\ingestion_pipeline.py'
+    if (-not (Test-Path $ingestion)) { Write-Fail 'global_mesh\ingestion_pipeline.py not found' }
     else {
         $content = Get-Content $ingestion -Raw
-        if ($content -notmatch 'source_class') { Write-Fail 'data_ingestion.py missing source_class tagging' }
-        else { Write-Pass 'data_ingestion.py uses source_class tagging' }
-        if ($content -notmatch 'MODEL_ANALYSIS') { Write-Fail 'data_ingestion.py missing MODEL_ANALYSIS tag' }
-        else { Write-Pass 'data_ingestion.py tags Open-Meteo weather as MODEL_ANALYSIS' }
+        if ($content -notmatch 'source_class') { Write-Fail 'ingestion_pipeline.py missing source_class tagging' }
+        else { Write-Pass 'ingestion_pipeline.py uses source_class tagging' }
+        if ($content -notmatch 'MODEL_ANALYSIS') { Write-Fail 'ingestion_pipeline.py missing MODEL_ANALYSIS tag' }
+        else { Write-Pass 'ingestion_pipeline.py tags Open-Meteo weather as MODEL_ANALYSIS' }
     }
     $store = Join-Path $repoRoot 'disaster-ai-api\global_mesh\mongodb_store.py'
     if (-not (Test-Path $store)) { Write-Fail 'global_mesh\mongodb_store.py not found' }
