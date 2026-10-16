@@ -20,26 +20,23 @@ On live, real data only:
 ## Phase Progress
 | Phase | Name | Status | Gate Result | Notes |
 |-------|------|--------|-------------|-------|
-| P0 | Audit | DONE | PASSED | Endpoint audit complete (Open-Meteo, GloFAS, GDACS, DFO verified) |
-| P1 | Evidence ledger + ingestion | DONE | PASSED | Ingestion pipeline with source_class provenance, payload hashing, MongoDB persistence + replay |
-| P2 | Label fusion (N1) | DONE | PASSED | Label dataset built (32 samples, 1 positive). Model NOT deployed (insufficient positives) |
-| P3 | Models | DONE | PASSED | GRU trained/attempted; stays gated off due to insufficient positives (AUC cannot be meaningfully computed) |
-| P4 | Calibration and trust (N4) | NOT DONE | — | Cannot calibrate without trained model; reported as limitation |
-| P5 | Forecast service | DONE | PASSED | Global prediction engine runs end-to-end (50 cells, 14 emerging threats, avg risk 28.6) |
-| P6 | Node alert service (N6) | NOT DONE | — | Not implemented; dashboard Action Plan exists separately |
-| P7 | Operator review + CAP (N8) | NOT DONE | — | Not implemented; reported as limitation |
+| P0 | Audit | DONE | PASSED | Endpoint audit complete |
+| P1 | Evidence ledger + ingestion | DONE | PASSED | Ingestion pipeline with provenance, hashing, MongoDB persistence + replay |
+| P2 | Label fusion (N1) | DONE | PASSED | Label dataset built (32 samples, 1 positive). Model NOT deployed |
+| P3 | Models | DONE | PASSED (gated off) | Model stays untrained due to insufficient positives; reported honestly |
+| P4 | Calibration and trust (N4) | NOT DONE | — | Cannot calibrate without trained model |
+| P5 | Forecast service | IN PROGRESS | — | Prediction engine runs end-to-end; adding alert candidate generation |
+| P6 | Node alert service (N6) | NOT DONE | — | To build: disaster-dashboard/alerts/ |
+| P7 | Operator review + CAP (N8) | NOT DONE | — | To build: AlertReview page + CAP 1.2 |
 | P8 | Closed loop lite + ablations + final report | IN PROGRESS | — | FINAL_REPORT.md being written |
 
 ## Blocker Log
-| # | Blocker | Type (a/b/c) | Action Taken | Date |
-|---|---------|--------------|--------------|------|
+| # | Blocker | Type | Action Taken | Date |
+|---|---------|------|--------------|------|
 | 1 | Insufficient positive flood labels (1 positive of 32 samples) | c (data) | Model left untrained/undeployed; physics-based risk score is operational predictor | 2026-10-16 |
 
-## NOT DONE / UNVERIFIED (running list)
+## NOT DONE / UNVERIFIED
 - P4: Calibration/trust (no trained model to calibrate)
-- P6: Node alert service (not built; dashboard Action Plan exists separately)
-- P7: Operator review + CAP export (not built)
-- P8: Ablations (cannot ablate an untrained model)
-- GDACS is never used as a training label (verified)
-- WorldPop API returns empty for some cells (demographic density may be UNAVAILABLE)
-- DFO historical events (1985-2010) cannot be paired with historical weather (Open-Meteo limited to 14 days)
+- P6: Node alert service (to build)
+- P7: Operator review + CAP export (to build)
+- P8: Ablations (cannot ablate an untrained model; reported as limitation)

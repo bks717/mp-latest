@@ -430,6 +430,10 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
+// ── Alert Service (Global Mesh) ─────────────────────────────────────────────
+// Single route-mount for alert candidates, decisions, and CAP export.
+app.use('/api/alert', require('./alerts/routes'));
+
 
 // ── Live Data (real-world floods from GDACS) ──────────────────────────────────
 // GDACS = Global Disaster Alert & Coordination System (UN/EU). Free, no API key.

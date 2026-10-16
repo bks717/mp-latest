@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alert Review — Global Mesh</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; line-height: 1.5; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  header { background: #0f172a; color: #fff; padding: 16px 24px; border-radius: 8px 8px 0 0; }
+  header h1 { font-size: 1.25rem; font-weight: 600; }
+  header .subtitle { font-size: 0.875rem; opacity: 0.7; margin-top: 4px; }
+  .toolbar { background: #fff; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 8px 8px; padding: 12px 24px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+  .badge.IMMINENT { background: #fee2e2; color: #991b1b; }
+  .badge.WARNING { background: #fef3c7; color: #92400e; }
+  .badge.WATCH { background: #dbeafe; color: #1e40af; }
+  .badge.NORMAL { background: #e2e8f0; color: #475569; }
+  .badge.trusted { color: #15803d; }
+  .badge.untrusted { color: #b45309; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; margin-top: 16px; }
+  th { background: #f8fafc; text-align: left; padding: 10px 12px; font-size: 0.75rem; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e2e8f0; }
+  td { padding: 10px 12px; font-size: 0.875rem; border-bottom: 1px solid #e2e8f0; }
+  tr:hover { background: #f8fafc; }
+  .actions { display: flex; gap: 6px; }
+  button { padding: 6px 12px; font-size: 0.875rem; font-weight: 500; border-radius: 6px; border: 1px solid transparent; cursor: pointer; transition: all 0.2s; }
+  button.approve { background: #10b981; color: #fff; }
+  button.approve:hover { background: #059669; }
+  button.reject { background: #ef4444; color: #fff; }
+  button.reject:hover { background: #dc2626; }
+  button.cancel { background: #e2e8f0; color: #475569; }
+  button.cancel:hover { background: #cbd5e1; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .cap-section { margin-top: 24px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; }
+  .cap-section h2 { font-size: 1rem; margin-bottom: 12px; color: #1e293b; }
+  .cap-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; font-family: monospace; font-size: 0.8rem; white-space: pre-wrap; overflow: auto; }
+  .empty-state { text-align: center; padding: 48px 24px; color: #64748b; }
+  .empty-state h3 { font-size: 1rem; margin-bottom: 8px; color: #1e293b; }
+  .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+  .status-pill.dry_run { background: #fef3c7; color: #92400e; }
+  .status-pill.live { background: #fee2e2; color: #991b1b; }
+  .btn-group { display: flex; gap: 8px; margin-top: 12px; }
+  .btn { padding: 10px 16px; font-size: 0.875rem; font-weight: 500; border-radius: 6px; border: 1px solid transparent; cursor: pointer; }
+  .btn.primary { background: #2563eb; color: #fff; }
+  .btn.primary:hover { background: #1d4ed8; }
+  .btn.secondary { background: #e2e8f0; color: #475569; }
+  .btn.secondary:hover { background: #cbd5e1; }
+  .toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 8px; color: #fff; font-weight: 500; display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+  .toast.show { display: block; }
+  .toast.success { background: #10b981; }
+  .toast.error { background: #ef4444; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>⚠️ Global Mesh — Alert Review</h1>
+      <div class="subtitle">Autonomous flood prediction — Review, approve, and export alert candidates</div>
+    </header>
+    <div class="toolbar">
+      <span class="status-pill dry_run" id="modeBadge">DRY RUN — No alerts will be sent</span>
+      <span class="status-pill" id="modeBadge2">Mode: DRY RUN</span>
+      <button class="btn primary" onclick="refreshCandidates()">Refresh Candidates</button>
+      <button class="btn secondary" onclick="exportCAP()">Export CAP 1.2 (All Approved)</button>
+    </div>
+
+    <div style="margin-top: 16px;">
+      <table>
+        <thead>
+          <tr>
+            <th>Cell ID</th>
+            <th>Region</th>
+            <th>Lat / Lng</th>
+            <th>P(Flood)</th>
+            <th>Tier</th>
+            <th>Trust</th>
+            <th>Severity</th>
+            <th>Primary Driver</th>
+            <th>Exposed Pop.</th>
+            <th>Decision</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="candidateTable">
+          <tr><td colspan="11" class="empty-state">Loading candidates…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="cap-section" id="capSection" style="display:none;">
+      <h2>CAP 1.2 Export — Approved Alerts</h2>
+      <div class="cap-box" id="capBox"></div>
+      <div class="btn-group" style="margin-top:12px;">
+        <button class="btn primary" onclick="downloadCAP()">Download CAP XML</button>
+        <button class="btn secondary" onclick="copyCAP()">Copy CAP XML</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast success" id="toast">Operation successful</div>
+
+<script>
+const API_BASE = '/api';
+let candidates = [];
+let selectedIds = new Set();
+
+async function refreshCandidates() {
+  const tbody = document.getElementById('candidateTable');
+  try {
+    const res = await fetch(`${API_BASE}/alert/candidates`);
+    const data = await res.json();
+    candidates = data.candidates || [];
+    render();
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="11" class="empty-state">Failed to load candidates: ' + e.message + '</td></tr>';
+  }
+}
+
+function render() {
+  const tbody = document.getElementById('candidateTable');
+  if (!candidates.length) {
+    tbody.innerHTML = '<tr><td colspan="11" class="empty-state">No alert candidates. Run a global scan first.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = candidates.map(c => `
+    <tr>
+      <td><code>${c.cell_id}</code></td>
+      <td>${c.region_name || '—'}</td>
+      <td>${(c.lat||0).toFixed(4)}, ${(c.lon||0).toFixed(4)}</td>
+      <td>${(c.predicted_flood_probability||0).toFixed(3)}</td>
+      <td><span class="badge ${c.risk_tier}">${c.risk_tier}</span></td>
+      <td><span class="badge ${c.trust_flag?'trusted':'untrusted'}">${c.trust_flag?'Trusted':'Untrusted'}</span></td>
+      <td>${c.severity || '—'}</td>
+      <td>${c.primary_driver || '—'}</td>
+      <td>${(c.estimated_exposed_pop||0).toLocaleString()}</td>
+      <td>
+        <span class="status-pill ${c.trust_flag?'':'untrusted'}">${c.model_status || 'untrained'}</span>
+      </td>
+      <td>
+        <div class="btn-group">
+          ${c.trust_flag ? `<button class="btn approve" onclick="decide('${c.candidate_id}','APPROVE')">Approve</button>` : '<button class="btn" disabled>Untrusted</button>'}
+          <button class="btn reject" onclick="decide('${c.candidate_id}','REJECT')">Reject</button>
+          <button class="btn cancel" onclick="decide('${c.candidate_id}','CANCEL')">Cancel</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function decide(candidateId, action) {
+  try {
+    const res = await fetch(`${API_BASE}/alert/decide`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ candidate_id: candidateId, action })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showToast('Decision recorded: ' + action);
+      refreshCandidates();
+    } else {
+      showToast('Error: ' + (data.error || 'unknown'), 'error');
+    }
+  } catch (e) {
+    showToast('Error: ' + e.message, 'error');
+  }
+}
+
+async function exportCAP() {
+  const approved = candidates.filter(c => c._decision === 'APPROVED');
+  if (!approved.length) {
+    showToast('No approved candidates to export', 'error');
+    return;
+  }
+  try {
+    const res = await fetch(`${API_BASE}/alert/cap/export`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ candidate_ids: approved.map(c => c.candidate_id) })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      document.getElementById('capBox').textContent = data.cap_xml;
+      document.getElementById('capSection').style.display = 'block';
+      showToast('CAP 1.2 exported (' + data.count + ' alerts)');
+    } else {
+      showToast('Error: ' + (data.error || 'unknown'), 'error');
+    }
+  } catch (e) {
+    showToast('Error: ' + e.message, 'error');
+  }
+}
+
+async function downloadCAP() {
+  const box = document.getElementById('capBox');
+  if (!box.textContent) return;
+  const blob = new Blob([box.textContent], {type: 'application/xml'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'global_mesh_alert_' + new Date().toISOString().slice(0,13) + '.xml';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function copyCAP() {
+  const box = document.getElementById('capBox');
+  if (!box.textContent) return;
+  try {
+    await navigator.clipboard.writeText(box.textContent);
+    showToast('CAP XML copied to clipboard');
+  } catch (e) {
+    showToast('Copy failed', 'error');
+  }
+}
+
+function showToast(msg, type='success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type === 'error' ? 'error' : 'success');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// Initialize
+refreshCandidates();
+setInterval(refreshCandidates, 30000);
+</script>
+</body>
+</html>

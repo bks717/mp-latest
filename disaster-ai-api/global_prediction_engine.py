@@ -59,6 +59,7 @@ from global_mesh.background_scanner import (
     JOB_PARTIAL,
     ScanJob,
 )
+from global_mesh.alerting.alert_candidates import build_alert_candidates
 
 logger = logging.getLogger("GlobalPredictionEngine")
 logging.basicConfig(level=logging.INFO)
@@ -649,6 +650,52 @@ class GlobalPredictionEngine:
             self.mongo_store.save_scan(scan_record)
         except Exception as exc:
             logger.warning("Failed to persist scan to MongoDB: %s", exc)
+
+        # --- Alert candidate generation (Phase 5) ---
+        try:
+            model_loaded = self.risk_model.is_trained()
+            model_validated = self.risk_model.is_validated()
+            model_manifest = None
+            try:
+                import json as _json
+                manifest_path = MODEL_PATH.replace(".pth", "_manifest.json")
+                with open(manifest_path, "r") as _f:
+                    model_manifest = _json.load(_f)
+            except Exception:
+                pass
+            model_auc = None
+            if model_manifest and model_manifest.get("evaluation"):
+                model_auc = model_manifest["evaluation"].get("roc_auc")
+
+            logger.info(
+                "DEBUG: result type = %s, keys = %s",
+                type(result),
+                list(result.keys())[:10] if isinstance(result, dict) else "NOT_A_DICT",
+            )
+            candidates = build_alert_candidates(
+                result,
+                model_trained=model_loaded,
+                model_validated=model_validated,
+                model_auc=model_auc,
+            )
+
+            # Save alert candidates to MongoDB
+            alert_docs = []
+            for c in candidates:
+                alert_docs.append({
+                    **c,
+                    "scan_id": scan_id,
+                    "created_at": now_iso,
+                })
+            try:
+                if self.mongo_store is not None and self.mongo_store.is_connected:
+                    alert_col = self.mongo_store.db["global_mesh_alert_candidates"]
+                    if alert_docs:
+                        alert_col.insert_many(alert_docs)
+            except Exception as exc:
+                logger.warning("Failed to save alert candidates: %s", exc)
+        except Exception as exc:
+            logger.warning("Alert candidate generation failed: %s", exc)
 
         logger.info(
             "✅ Global scan complete: %d cells evaluated (%d active data), %d emerging threats, "
