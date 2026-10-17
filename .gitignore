@@ -1,3 +1,4 @@
 .env
 secrets/
-mp_proj_1
+mp_proj_1/
+guide_package/

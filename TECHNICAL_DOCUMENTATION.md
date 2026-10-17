@@ -45,7 +45,7 @@ FloodWatch is a full-stack disaster management system for flood early warning an
 | **Database** | MongoDB + SQLite | Predictions, global scans, verifications, action plans, impact assessments, alert candidates, scan history | — |
 
 **Core design principles:**
-- Live data only — no synthetic data, no API keys required
+- Live telemetry data only for operations — zero synthetic data fabrication during operations, no API keys required (M1/M6 trained on real benchmark/location data; M2/M3/M4 trained on synthetic/simulator hydrology benchmarks)
 - Missing data never fabricated; missing data ≠ safe
 - Dry-run alert mode by default; operator-in-the-loop for all alert decisions
 - Full audit trail; minimal PII (coarse cell ID only, consent-based)
@@ -666,9 +666,9 @@ class MultiFactorFloodPredictor(nn.Module):
 **File:** `train_streamflow_lstm.py`, weights `streamflow_forecast_lstm.pth`
 
 **Architecture:** State-handoff encoder-decoder LSTM  
-**Training data:** Caravan/CAMELS catchment specification  
-**Task:** 7-day river streamflow (discharge) forecasting  
-**Performance:** Mean NSE: 0.983  
+**Training data:** Caravan/CAMELS catchment benchmark simulation suite  
+**Task:** 72-hour (3-day) river streamflow (discharge) forecasting at $H=24, 48, 72$  
+**Performance:** Mean NSE: 0.983 (surrogate simulator benchmark fit per manifest; not noisy real-world gauge accuracy)  
 **Manifest:** `streamflow_model_manifest.json`
 
 ### Model M4 — TCN-Attention Multi-Horizon Forecaster
@@ -737,9 +737,11 @@ class DeepEnsembleFloodPredictor:
 
 ### Model M7 — Physics-Based Transparent Risk Score
 
-**Files:** `flood_risk_engine.py`, `global_mesh/risk_scorer.py`
+**Files:** `global_mesh/risk_scorer.py` (Global Mesh), `flood_risk_engine.py` (Local Reach)
 
-**Formula:** Risk = 100 × Hazard × (0.50 × Exposure + 0.50 × Vulnerability)
+**Formula:** $R = 100 \times H$ (Formula: Risk = 100 × Hazard = $100 \times H$, matching Eq. 3 in the paper) where $H = \frac{\sum_{i \in \mathcal{A}} w_i s_i}{\sum_{i \in \mathcal{A}} w_i}$.
+- Pure physical hazard composite index over 5 available physical factor groups. Exposure and vulnerability enter downstream in the spatial impact assessment.
+- (Local Reach Engine `flood_risk_engine.py` incorporates exposure/vulnerability for reach-level unified dashboard predictions).
 
 **Four outputs:**
 | Output | Type | Range | Basis |
@@ -894,15 +896,14 @@ Valid CAP 1.2 XML structure:
   <identifier>URN:OASIS:EMERGENCY:CAP:GLOBAL_MESH:...</identifier>
   <sender>global-mesh@floodwatch.ai</sender>
   <sent>...</sent>
-  <status>Actual</status>
+  <status>Exercise</status>
   <msgType>Alert</msgType>
-  <scope>Public</scope>
+  <scope>Restricted</scope>
   <info>
     <language>en</language>
     <category>Met</category>
     <event>Flood Alert</event>
     <responseType>Evacuate|Prepare|Monitor</responseType>
-    <priority>Immediate|Expected|Minor</priority>
     <urgency>Immediate|Expected|Minor</urgency>
     <severity>...</severity>
     <certainty>Observed|Likely</certainty>
@@ -911,7 +912,7 @@ Valid CAP 1.2 XML structure:
     <instruction>...</instruction>
     <area>
       <areaDesc>{country}, {basin}</areaDesc>
-      <polygon>{lat} {lon}</polygon>
+      <polygon>{lat1},{lon1} {lat2},{lon2} {lat3},{lon3} {lat4},{lon4} {lat1},{lon1}</polygon>
       <altitude>0</altitude>
       <ceiling>0</ceiling>
     </area>
@@ -1062,7 +1063,7 @@ node server.js
 |------|---------------|
 | ALERT_MODE = dry_run | Default, never changed |
 | Operator approval mandatory | AlertReview page requires manual approve/reject/cancel |
-| Trust gate | Only trained+validated model output trusted (currently 0 trusted) |
+| Trust gate | Only trained+validated model output with fresh telemetry and bounded spread trusted (7 of 38 candidates trusted in 50-cell scan) |
 | Fatigue budget | Max 3 alerts per cell per day |
 | Kill-switch | Policy engine supports de-escalation/all-clear |
 | Audit trail | decision_timestamp, decision_reason, policy_decision stored in MongoDB |
@@ -1074,14 +1075,14 @@ node server.js
 | # | Limitation | Disclosure |
 |---|-----------|------------|
 | L1 | GRU model trained & deployed (AUC=0.8952) | GRU probability used in alert candidates; physics score remains fallback |
-| L2 | Open-Meteo limited to 14 days history | Cannot pair DFO labels with historical weather |
-| L3 | DFO archive covers 1985–2010 only | No recent flood events for validation |
+| L2 | Live operational ingestion endpoint queries a 14-day window (retrospective ERA5/GloFAS historical pairing deferred to future work) | Ingested current/recent telemetry rather than multi-decadal historical archive |
+| L3 | Historical weather pairing for DFO (1985–2010) | Features describe current location susceptibility rather than event-day weather; retrospective ERA5 pairing future work |
 | L4 | GloFAS is modelled reanalysis, not gauge truth | Proxy for ground truth |
 | L5 | GDACS centroids are approximate | Not precise inundation footprints |
 | L6 | MC-dropout uncertainty not independently validated | Epistemic estimate only |
 | L7 | Grid sampling cap (50 cells/run) | Multiple scans needed for full coverage |
 | L8 | P4 calibration/trust completed | Model calibrated (AUC=0.8952 > climatology 0.5000 + 0.05) |
-| L9 | Ablation studies not done | Cannot ablate without separate experiment setup |
+| L9 | Ablation studies not done | Systematic component ablation across channels deferred to future work (requires automated multi-run ablation test harness) |
 | L10 | Closed-loop scoring (N7) not done | Requires live alert delivery feedback |
 | L11 | Sentinel-1 SAR flood labels not integrated | Placeholder only |
 | L12 | FCM real delivery not enabled | dry_run only; FCM mocked |

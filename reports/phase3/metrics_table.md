@@ -1,6 +1,9 @@
 # Phase 3 — Models Metrics Table
 
-## Honest Result: Model Untrained
+> [!NOTE]
+> **Sprint Snapshot (Phase 3 Prototype):** This file records the early exploratory run on 32 samples (1 positive). For the finalized production model trained on 352 real-world locations (test AUC = 0.8952, Brier = 0.0469, BSS = 0.537), see `disaster-ai-api/global_mesh/models/flood_risk_gru_manifest.json` and the IEEE conference paper (`mp_proj_1/floodwatch_ieee.tex`).
+
+## Honest Result: Model Untrained (Initial 32-sample exploratory phase)
 
 The GRU model could NOT be trained because only 1 positive flood label exists out of 32 samples. No metrics can be computed.
 

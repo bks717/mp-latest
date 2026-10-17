@@ -162,7 +162,7 @@ router.post('/cap/export', async (req, res) => {
       instruction: 'Monitor local conditions and follow official evacuation instructions.',
       area: [{
         areaDesc: `${a.country || 'Unknown'}, ${a.basin || 'Unknown'}`,
-        polygon: `${(a.lat||0).toFixed(4)} ${(a.lon||0).toFixed(4)}`,
+        polygon: `${((a.lat||0)-0.05).toFixed(4)},${((a.lon||0)-0.05).toFixed(4)} ${((a.lat||0)+0.05).toFixed(4)},${((a.lon||0)-0.05).toFixed(4)} ${((a.lat||0)+0.05).toFixed(4)},${((a.lon||0)+0.05).toFixed(4)} ${((a.lat||0)-0.05).toFixed(4)},${((a.lon||0)+0.05).toFixed(4)} ${((a.lat||0)-0.05).toFixed(4)},${((a.lon||0)-0.05).toFixed(4)}`,
         altitude: '0',
         ceiling: '0',
       }],
@@ -175,7 +175,7 @@ router.post('/cap/export', async (req, res) => {
   <sent>${now}</sent>
   <status>Exercise</status>
   <msgType>Alert</msgType>
-  <scope>Public</scope>
+  <scope>Restricted</scope>
   <references></references>
   <info>
 ${approved.map(a => `    <info>
@@ -191,7 +191,7 @@ ${approved.map(a => `    <info>
       <instruction>Monitor local conditions and follow official evacuation instructions.</instruction>
       <area>
         <areaDesc>${a.country || 'Unknown'}, ${a.basin || 'Unknown'}</areaDesc>
-        <polygon>${(a.lon-0.01).toFixed(4)} ${(a.lat-0.01).toFixed(4)} ${(a.lon+0.01).toFixed(4)} ${(a.lat-0.01).toFixed(4)} ${(a.lon+0.01).toFixed(4)} ${(a.lat+0.01).toFixed(4)} ${(a.lon-0.01).toFixed(4)} ${(a.lat+0.01).toFixed(4)} ${(a.lon-0.01).toFixed(4)} ${(a.lat-0.01).toFixed(4)}</polygon>
+        <polygon>${((a.lat||0)-0.05).toFixed(4)},${((a.lon||0)-0.05).toFixed(4)} ${((a.lat||0)+0.05).toFixed(4)},${((a.lon||0)-0.05).toFixed(4)} ${((a.lat||0)+0.05).toFixed(4)},${((a.lon||0)+0.05).toFixed(4)} ${((a.lat||0)-0.05).toFixed(4)},${((a.lon||0)+0.05).toFixed(4)} ${((a.lat||0)-0.05).toFixed(4)},${((a.lon||0)-0.05).toFixed(4)}</polygon>
         <altitude>0</altitude>
         <ceiling>0</ceiling>
       </area>

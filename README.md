@@ -175,7 +175,7 @@ Six deep-learning components power FloodWatch. All six are operational after tra
 |---|-------|-----------|------|--------|--------------|
 | M1 | **EfficientNet-B3 U-Net** | PyTorch + segmentation-models-pytorch | Sentinel-1 SAR flood segmentation (pixel-wise inundation mask) | Operational (inference) | `unet_b3.pth` |
 | M2 | **MultiFactorFloodPredictor** | PyTorch (Cross-Attention + Residual + Multi-Task) | Real-time flood probability, severity, depth from 24 live factors | Operational (inference) | `flood_prediction_model.pth` |
-| M3 | **StreamFlow LSTM** | PyTorch (State-Handoff Encoder-Decoder) | 7-day river streamflow forecasting | Operational (heuristic fallback) | `streamflow_forecast_lstm.pth` |
+| M3 | **StreamFlow LSTM** | PyTorch (State-Handoff Encoder-Decoder) | 72-hour (3-day) river streamflow forecasting | Operational (surrogate simulator fit) | `streamflow_forecast_lstm.pth` |
 | M4 | **TCN-Attention Forecaster** | PyTorch (Dilated Causal TCN + Multi-Head Self-Attention) | 72-hour multi-horizon flood probability/severity | Operational | `tcn_flood_forecaster.pth` |
 | M5 | **Deep Ensemble (M=5)** | PyTorch (5× MultiFactorFloodPredictor) | Epistemic uncertainty + 95% CI + OOD detection | Operational | ensemble of `flood_prediction_model.pth` |
 | M6 | **Global Mesh GRU** | PyTorch (GRU Encoder + Static Branch + Probabilistic Head) | Per-cell P(flood=1) with MC-dropout uncertainty | **TRAINED / DEPLOYED** (AUC=0.895) | `global_mesh/models/flood_risk_gru.pth` |
@@ -204,9 +204,9 @@ Six deep-learning components power FloodWatch. All six are operational after tra
 #### M3 — StreamFlow LSTM (State-Handoff Encoder-Decoder)
 - **File:** `disaster-ai-api/train_streamflow_lstm.py`, weights `streamflow_forecast_lstm.pth`
 - **Architecture:** State-handoff encoder-decoder LSTM trained on Caravan/CAMELS catchment specification
-- **Task:** 7-day river streamflow (discharge) forecasting
-- **Performance:** Mean NSE: 0.983 (per `disaster_model_metrics.json` / `streamflow_model_manifest.json`)
-- **Status:** Trained weights exist; heuristic fallback used when model unavailable
+- **Task:** 72-hour (3-day) river streamflow (discharge) forecasting at $H=24, 48, 72$
+- **Performance:** Mean NSE: 0.983 (surrogate fit evaluated against Caravan benchmark simulation equations per `streamflow_model_manifest.json`; not noisy real-world gauge accuracy)
+- **Status:** Operational surrogate weights; heuristic fallback used when model unavailable
 
 #### M4 — TCN-Attention Multi-Horizon Forecaster
 - **File:** `disaster-ai-api/tcn_attention_forecaster.py`, weights `tcn_flood_forecaster.pth`
@@ -294,12 +294,16 @@ Global Mesh Scan → Alert Candidates → Operator Review → CAP 1.2 Export
 Closed-Loop Verification (HIT / MISS / FALSE_ALARM / CN / DATA_UNAVAILABLE)
 ```
 
-### 5.2 Training Philosophy
+### 5.2 Training Philosophy & Provenance Separation
 
-- **No synthetic data** — All training labels from verified DFO historical events only.
-- **Geographical split** — Train/validation split by geography to prevent spatial leakage (`train_global_mesh_model.py`, `reports/phase3/leakage_test.py`).
-- **Validation gating** — Model deployed only if `is_trained() AND is_validated() AND AUC >= climatology + 0.05`. Currently not met → GRU undeployed.
-- **MC-dropout uncertainty** — 25 inference passes for epistemic std + 95% CI.
+- **Live Ingestion Data Integrity** — Zero synthetic data fabrication during live operational telemetry ingestion; missing values are explicitly flagged as `DATA_UNAVAILABLE` and never treated as safe.
+- **Provenance by Model Component:**
+  - **M1 (SAR U-Net):** Trained on authentic Sentinel-1 satellite imagery from the `Sen1Floods11` benchmark (held-out test IoU 0.5142, Dice 0.6572).
+  - **M6 (Global Mesh GRU):** Trained on 352 real-world location profiles (61 DFO verified flood events + 291 non-flood catchments) paired with authentic ECMWF IFS/GloFAS telemetry.
+  - **M2, M3, M4 (Cross-Attention, StreamFlow LSTM, TCN-Attention):** Neural surrogate components pre-trained on synthetic hydrology regimes and Caravan physical simulation suites. Reported benchmark metrics (e.g. M2 ROC-AUC 1.00, M3 NSE 0.983) reflect simulator fitting fidelity, not real-world gauge skill.
+- **Geographical Split** — M6 train/validation split strictly partitioned by geography to prevent spatial leakage (held-out test $N=70$, 8 positives; 95% CI [0.75, 1.00]).
+- **Validation Gating** — Model deployed only if `is_trained() AND is_validated() AND AUC >= climatology + 0.05`. Met with test AUC = 0.8952 vs climatology 0.5000 (+0.3952 margin) → **GRU Trained & Deployed**.
+- **MC-dropout Uncertainty** — 25 inference passes for epistemic std $\sigma$ + 95% CI.
 
 ---
 
@@ -357,7 +361,7 @@ All sources are **verified live, no API keys required**. Every ingested field ca
 
 **Policy Engine** (`disaster-dashboard/alerts/policy_engine.js`):
 - Cost-loss expected utility: alert only if `P(flood) × loss > cost` → threshold P > 0.10
-- Trust gate: only trained+validated model output trusted (currently 4+ candidates trusted per scan)
+- Trust gate: only trained+validated model output with fresh telemetry and bounded epistemic spread is trusted (7 candidates passed trust gate $\Gamma$ out of 38 generated in standard 50-cell scan)
 - Hysteresis: escalate needs 2 confirmations, de-escalate needs 3
 - Deduplication: one active alert per cell
 - Fatigue budget: max 3 alerts per cell per day
@@ -628,16 +632,16 @@ F:\mp-latest\  (Project Root)
 | Global average risk score | 28.5 |
 | GeoJSON features | 50 |
 | GDACS live events linked | 100 |
-| Alert candidates generated | 36 |
-| Alert candidates trusted | 4 (model trained+validated) |
+| Alert candidates generated | 38 |
+| Alert candidates trusted | 7 (passed trust gate $\Gamma$: model validated, telemetry fresh $\le 48$h, $\sigma \le 0.25$) |
 
 ### 10.2 Model Metrics
 
 | Model | Metric | Value |
 |-------|--------|-------|
-| StreamFlow LSTM (M3) | Mean NSE | 0.983 |
-| MultiFactor Predictor (M2) | ROC-AUC | 1.00 (reported in `dl_model_credentials`) |
-| Global Mesh GRU (M6) | Status | Trained/Deployed (AUC=0.8952, 352 samples) |
+| StreamFlow LSTM (M3) | Mean NSE | 0.983 (surrogate fit against Caravan simulation equations; 72-h horizon) |
+| MultiFactor Predictor (M2) | ROC-AUC | 1.00 (surrogate fit on synthetic regime benchmark; not real gauge accuracy) |
+| Global Mesh GRU (M6) | Status | Trained/Deployed (Held-out Test AUC=0.8952, Brier=0.0469, BSS=0.537, 352 samples) |
 | Deep Ensemble (M5) | Epistemic uncertainty | 95% CI via MC variance |
 | TCN-Attention (M4) | Receptive field | 125 hours |
 
@@ -660,15 +664,15 @@ F:\mp-latest\  (Project Root)
 |---|-----------|--------|---------------------|
 | L1 | GRU model trained & deployed (AUC=0.8952) | GRU probability used in alert candidates; physics score remains fallback | FINAL_REPORT §Model Training |
 | L2 | 352 labelled samples (61 positive / 291 negative) | Sufficient for training; more labels would improve robustness | FINAL_REPORT §Model Training |
-| L3 | Open-Meteo limited to 14 days history | Cannot pair DFO labels with historical weather | FINAL_REPORT §Limitations L4 |
-| L4 | DFO archive covers 1985–2010 only | No recent flood events for validation | FINAL_REPORT §Limitations L2 |
+| L3 | Live operational ingestion endpoint queries a 14-day window (retrospective ERA5/GloFAS historical pairing deferred to future work) | Ingested current/recent telemetry rather than multi-decadal historical archive | Paper §II-B, FINAL_REPORT §Limitations L4 |
+| L4 | Historical weather pairing for DFO (1985–2010) | Features describe current location susceptibility rather than event-day weather; retrospective ERA5 pairing future work | Paper §II-B, FINAL_REPORT §Limitations L2 |
 | L5 | GloFAS is modelled reanalysis, not gauge truth | Labels measure skill against proxy | FINAL_REPORT §Limitations L3 |
 | L6 | GDACS centroids are approximate, not footprints | Approximate event locations | FINAL_REPORT §Limitations L5 |
 | L7 | MC-dropout uncertainty not independently validated | Epistemic estimate only | FINAL_REPORT §Limitations L6 |
 | L8 | Grid sampling cap (50 cells/run) | Full planetary coverage needs multiple scans | FINAL_REPORT §Limitations L7 |
 | L9 | Model not deployed unless AUC > climatology + 0.05 | Prevents unskilled model deployment | FINAL_REPORT §Limitations L8 |
 | L10 | P4 calibration/trust completed | Model calibrated (AUC=0.8952 > climatology 0.5000 + 0.05) | FINAL_REPORT §Not Implemented |
-| L11 | Ablation studies not done | Cannot ablate without separate experiment setup | FINAL_REPORT §Not Implemented |
+| L11 | Ablation studies not done | Systematic component ablation across channels deferred to future work | Paper §IV-H, FINAL_REPORT §Not Implemented |
 | L12 | Closed-loop scoring (N7) not done | Requires live alert delivery feedback | FINAL_REPORT §Not Implemented |
 | L13 | Sentinel-1 SAR flood labels not integrated | Placeholder only, not wired to training | FINAL_REPORT §Not Implemented |
 | L14 | FCM real delivery not enabled | dry_run only; FCM mocked | FINAL_REPORT §Not Implemented |
@@ -770,7 +774,7 @@ curl http://127.0.0.1:8000/docs
 
 - **Dry-run default:** `ALERT_MODE=dry_run`; no real alerts delivered to people; FCM client mocked.
 - **Operator-in-the-loop:** All alert dispatch requires manual approve/reject/cancel via Alert Review page.
-- **Trust gate:** Only trained+validated model output is trusted; currently 0 candidates trusted.
+- **Trust gate:** Only candidates satisfying joint criteria (telemetry complete, model validated, freshness $\le 48\ \text{h}$, $\sigma \le 0.25$) are trusted (7 of 38 candidates passed in 50-cell scan; untrusted candidates downgraded to WATCH and blocked from dispatch).
 - **Fatigue budget:** Maximum 3 alerts per cell per day.
 - **Hysteresis + kill-switch:** Escalation requires 2 confirmations; de-escalation/all-clear supported.
 - **Audit trail:** `decision_timestamp`, `decision_reason`, `policy_decision` stored in MongoDB for every decision.
@@ -821,7 +825,7 @@ Honest disclosure of model limitations (limited labelled data, DFO archive 1985�
 | P5 | Forecast service | `reports/phase5/` | DONE — alert candidates written to MongoDB |
 | P6 | Node alert service (N6) | `disaster-dashboard/alerts/` | DONE — policy engine, device registry, CAP export |
 | P7 | Operator review + CAP (N8) | `reports/phase7/cap_schema_validation.md` | DONE — AlertReview page, CAP 1.2 export |
-| P8 | Closed loop + ablations + final report | `reports/FINAL_REPORT.md` | DONE |
+| P8 | Closed loop + final report (ablations deferred) | `reports/FINAL_REPORT.md` | DONE (synthesis report completed; experimental ablations future work) |
 
 **Final Report:** `reports/FINAL_REPORT.md` — contains the executive summary, phase completion status, data sources, provenance policy, honest model training results, alerting layer details, end-to-end test results, MongoDB collections, Open-Meteo HTTP 429 handling, dashboard integration, alert safety compliance, not-implemented items, scope compliance, and complete files-changed list.
 

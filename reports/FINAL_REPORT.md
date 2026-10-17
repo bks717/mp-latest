@@ -1,6 +1,9 @@
 # Global Mesh — Final Report
 # Global Mesh Fast-Track (bogubhai-novelty)
 
+> [!NOTE]
+> **Sprint Note & Training Evolution:** This report archives the initial fast-track prototype phase (32 samples, 1 positive) where the GRU was initially gated off. In the subsequent full training and validation pass (see `global_mesh/models/flood_risk_gru_manifest.json`, `README.md`, and the IEEE paper `mp_proj_1/floodwatch_ieee.tex`), the dataset was expanded to 352 real-world locations (61 positives), the GRU reached held-out test AUC = 0.8952 (95% CI [0.75, 1.00]), Brier = 0.0469, and was deployed. In the 50-cell benchmark scan, 7 of 38 candidates passed the trust gate $\Gamma$.
+
 ## Executive Summary
 
 Global Mesh is an autonomous global flood early-warning and prediction system that evaluates environmental conditions cell-by-cell across a global 0.25° geographical grid (60°S–60°N). It ingests live data from authoritative open-access sources, scores flood risk using a physics-based explainable composite index, detects emerging high-risk regions, and produces alert candidates for operator review and CAP 1.2 export.
@@ -63,7 +66,7 @@ The GRU spatiotemporal flood-risk model could NOT be trained or deployed:
 
 The flood risk score is a transparent, explainable composite index (0–100) computed as:
 
-**Risk = 100 × Hazard × (0.50 × Exposure + 0.50 × Vulnerability)**
+**Risk = 100 × Hazard** (Global Mesh M7, matching Eq. 3 in paper: $R = 100 \times H$; local reach engine incorporates exposure & vulnerability).
 
 Four clearly-distinguished outputs are produced:
 
