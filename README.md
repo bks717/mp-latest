@@ -373,9 +373,9 @@ All sources are **verified live, no API keys required**. Every ingested field ca
 - MongoDB-backed with in-memory fallback
 
 **CAP 1.2 Export** (`disaster-dashboard/alerts/routes.js`):
-- Valid CAP 1.2 XML: identifier, sender, sent, status, msgType, scope, references
-- Info blocks: language, category, event (Flood Alert), responseType, priority, urgency, severity, certainty, headline, description, instruction, area (areaDesc, polygon, altitude, ceiling)
-- All exported CAP files validated against CAP 1.2 schema structure
+- Valid OASIS CAP 1.2 XML: `<identifier>`, `<sender>`, `<sent>`, `<status>Exercise</status>` (preserving dry-run safety containment), `<msgType>Alert</msgType>`, `<scope>Restricted</scope>`, references
+- Info blocks: `<language>en</language>`, `<category>Met</category>`, `<event>Flood Alert</event>`, responseType, priority, urgency, severity, certainty, `<headline>`, `<description>`, `<instruction>`, and `<area>` containing `<areaDesc>` and closed 5-point bounding polygon `<polygon>{lat1},{lon1} {lat2},{lon2} {lat3},{lon3} {lat4},{lon4} {lat1},{lon1}</polygon>`
+- All exported CAP files validated against standard OASIS CAP 1.2 schema structure
 
 **Operator Review** (`disaster-dashboard/public/alert_review.html`):
 - Table: Cell ID, Region, Lat/Lng, P(Flood), Tier, Trust, Severity, Primary Driver, Exposed Pop., Decision, Actions

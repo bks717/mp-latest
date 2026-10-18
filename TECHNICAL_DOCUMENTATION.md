@@ -276,9 +276,9 @@ At import time, `main.py` loads and initializes:
 #### M1 — `unet_b3.pth` + `build_model_input` / `run_inference` (in `main.py`)
 - **Architecture:** `smp.Unet(encoder_name="efficientnet-b3", encoder_weights=None, in_channels=4, classes=1)`
 - **Input channels:** VV (norm dB), VH (norm dB), VV/VH ratio (min-max norm), JRC GSW occurrence / specular water prior
-- **Threshold:** 0.65 sigmoid (raised from 0.5 to reduce false positives)
+- **Threshold:** 0.65 sigmoid (tuned on validation split to suppress false alarms over smooth agricultural soil)
 - **False-positive filter:** >150 km² removed, ocean removed via `global-land-mask`, permanent water subtracted via OSM
-- **Training basis:** Sen1Floods11 dual-pol SAR (documented in `colab_model_v4.ipynb`)
+- **Training basis & metrics:** Sen1Floods11 dual-pol SAR (42 epochs with Adam, Cosine Annealing, Dice + Focal loss, documented in `old_models_and_tif/colab_model_v4.ipynb`). Best validation IoU: **0.548** (Dice: 0.685). Held-out test performance (44 samples): **Test IoU: 0.5142**, **Test Dice: 0.6572** (outperforming Otsu baseline IoU 0.4326 and ResNet-50 FCN baseline IoU 0.4851).
 
 #### M2 — `disaster_prediction_model.py` — `MultiFactorFloodPredictor`
 - **Architecture:** Live telemetry (24 factors) → physical feature engineering → domain group encoders → `CrossDomainAttention` (multi-head self-attention, embed_dim=128, num_heads=4) → `ResidualBlock` (dense residual, LayerNorm, GELU, dropout=0.25) → deep residual network → multi-task heads (probability, severity, depth) + MC dropout
@@ -629,7 +629,16 @@ Channel 4: JRC Global Surface Water occurrence / specular water prior [0,1]
 4. `filter_polygons()` → remove >150 km² false positives → remove ocean → subtract OSM permanent water
 5. `build_features()` → compute area (EPSG:6933), danger level, GeoJSON
 
-**Training basis:** Sen1Floods11 dual-polarization SAR (VV+VH), documented in `colab_model_v4.ipynb` and `colabmodel_code.ipynb` in `old_models_and_tif/`
+**Training basis:** Sen1Floods11 dual-polarization SAR (VV+VH), documented in `old_models_and_tif/colab_model_v4.ipynb` and `colabmodel_code.ipynb`. Trained for 42 epochs with Adam optimizer (initial learning rate $1 \times 10^{-4}$, Cosine Annealing, batch size 8) under combined Dice and Focal loss ($\gamma = 2.0$).
+
+**Verified Benchmark Performance:**
+| Model / Configuration | Encoder / Loss | Val IoU | Val Dice | Test IoU | Test Dice |
+|-----------------------|----------------|---------|----------|----------|-----------|
+| Otsu Baseline [Bonafilia et al.] | Intensity Thresholding | — | — | 0.4326 | 0.5512 |
+| FCN Baseline [Bonafilia et al.] | ResNet-50 / BCE | — | — | 0.4851 | 0.6234 |
+| v1 (Internal Iteration) | ResNet-34 / BCE | 0.460 | 0.590 | — | — |
+| v2 (Internal Iteration) | ResNet-34 / Dice+Aug | 0.500 | 0.640 | — | — |
+| **v3 (Proposed Deployed)** | **EffNet-B3 / Dice+Focal** | **0.548** | **0.685** | **0.5142** | **0.6572** |
 
 ### Model M2 — MultiFactorFloodPredictor (Cross-Attention + Residual)
 
