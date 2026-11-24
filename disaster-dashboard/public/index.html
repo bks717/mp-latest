@@ -5971,6 +5971,26 @@ function clearHydrologyLayers() {
 if (typeof initPredictLayers === 'function') {
     initPredictLayers();
 }
+
+// Support initial tab selection via query parameter (e.g. ?tab=impact&run=impact)
+try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const initialTab = urlParams.get('tab');
+    if (initialTab && typeof switchTab === 'function') {
+        setTimeout(() => {
+            switchTab(initialTab);
+            if (urlParams.get('run') === 'impact' && typeof runMultiScaleImpactAssessment === 'function') {
+                const latIn = document.getElementById('impactLat');
+                const lngIn = document.getElementById('impactLng');
+                if (latIn && (!latIn.value || isNaN(parseFloat(latIn.value)))) latIn.value = '41.1190';
+                if (lngIn && (!lngIn.value || isNaN(parseFloat(lngIn.value)))) lngIn.value = '-73.3711';
+                setTimeout(() => runMultiScaleImpactAssessment(), 800);
+            }
+        }, 300);
+    }
+} catch (e) {
+    console.warn('Initial tab selection notice:', e);
+}
 </script>
 
 <!-- 24 Live Factors & Sensors Modal -->

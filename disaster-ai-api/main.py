@@ -1899,6 +1899,7 @@ async def impact_multiscale(request: MultiScaleImpactRequest):
     slope_pct = None
     glofas_provenance = None
     rainfall_provenance = None
+    gdacs_historical = []
     try:
         data_coll = get_data_collector()
         if data_coll:

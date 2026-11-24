@@ -199,7 +199,7 @@ ${approved.map(a => `    <info>
   </info>
 </alert>`;
 
-    res.json({ count: approved.length, cap_xml });
+    res.json({ count: approved.length, cap_xml: capXml });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
