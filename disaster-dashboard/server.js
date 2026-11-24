@@ -1056,7 +1056,9 @@ app.post('/api/action/multiscale', async (req, res) => {
         res.json(aiResponse.data);
     } catch (error) {
         console.error('🚨 Error in multi-scale Action Plan proxy:', error.message);
-        res.status(500).json({ error: 'Failed to execute multi-scale action plan: ' + error.message });
+        const detailMsg = error.response?.data?.detail || error.response?.data?.error || error.message;
+        const statusCode = error.response?.status || 500;
+        res.status(statusCode).json({ error: detailMsg });
     }
 });
 

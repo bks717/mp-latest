@@ -2479,11 +2479,15 @@
                 <div class="section-label">Incident Command & Evacuation Directives</div>
                 <p class="hint">Genuine flood-aware evacuation routing & multi-tier operational dispatch. Integrates verified OSM shelters, Copernicus DEM elevation profiles, and flood-penalized Dijkstra corridors.</p>
 
+                <!-- Prerequisite Status Card: Enforces Action Plan generated strictly from SAR Radar Scan results -->
+                <div id="action-prereq-card" style="margin-top:8px; margin-bottom:8px; padding:10px 12px; border-radius:var(--radius-sm); font-size:11px; line-height:1.5;"></div>
+
                 <div class="coord-grid">
                     <input type="number" id="actionLat" class="field" placeholder="Lat" step="any">
                     <input type="number" id="actionLng" class="field" placeholder="Lng" step="any">
                     <button class="btn btn-ghost" style="width:auto" onclick="syncActionCoordsFromMap()">Sync</button>
                 </div>
+                <div style="font-size:10px; color:var(--text-2); margin-top:2px;">📍 Evacuation Origin: Automatically anchored to verified SAR radar flood polygon (not centroid).</div>
 
                 <!-- Action Plan Configuration Grid -->
                 <div style="display:grid; grid-template-columns: 1fr; gap:6px; margin-top:8px;">
@@ -3027,17 +3031,21 @@ function switchTab(id) {
             if (latIn) latIn.value = curLat.toFixed(4);
             if (lngIn) lngIn.value = curLng.toFixed(4);
         } else if (id === 'action') {
+            if (typeof updateActionPlanPrerequisitesUI === 'function') updateActionPlanPrerequisitesUI();
             const latIn = document.getElementById('actionLat');
             const lngIn = document.getElementById('actionLng');
-            let effLat = curLat;
-            let effLng = curLng;
-            if ((effLat == null || effLng == null) && window.floodwatchSharedContext && window.floodwatchSharedContext.lat != null) {
-                effLat = window.floodwatchSharedContext.lat;
-                effLng = window.floodwatchSharedContext.lng;
-            }
-            if (effLat != null && effLng != null) {
-                if (latIn) latIn.value = effLat.toFixed(4);
-                if (lngIn) lngIn.value = effLng.toFixed(4);
+            const sarFeatures = (window.lastSarScanFeatures && window.lastSarScanFeatures.length > 0)
+                ? window.lastSarScanFeatures
+                : (window.floodwatchSharedContext?.geojson?.features || []);
+            if (sarFeatures && sarFeatures.length > 0 && typeof extractSarFloodOrigin === 'function') {
+                const floodPt = extractSarFloodOrigin(sarFeatures, curLat, curLng);
+                if (floodPt && latIn && lngIn) {
+                    latIn.value = floodPt[0].toFixed(4);
+                    lngIn.value = floodPt[1].toFixed(4);
+                }
+            } else if (curLat != null && curLng != null) {
+                if (latIn && (!latIn.value || latIn.value === '')) latIn.value = curLat.toFixed(4);
+                if (lngIn && (!lngIn.value || lngIn.value === '')) lngIn.value = curLng.toFixed(4);
             }
         }
     }
@@ -3102,6 +3110,7 @@ function renderAIResponse(data, statusEl) {
 // Features: SAR Radar · Impact Matrix · Action Plan
 // ═════════════════════════════════════════════════════════════════════
 const sarMultiscaleLayers    = L.featureGroup().addTo(map);
+window.sarMultiscaleLayers = sarMultiscaleLayers;
 const impactMultiscaleLayers = L.featureGroup().addTo(map);
 const actionMultiscaleLayers = L.featureGroup().addTo(map);
 
@@ -3379,6 +3388,23 @@ async function runMultiScaleSarScan() {
         if (badge) { badge.textContent = 'VERIFIED'; badge.className = 'metric-status-pill available'; }
         if (statusBanner) statusBanner.innerHTML = `✅ Progressive SAR scan complete across all 4 spatial scales (5×5 km to 50×50 km). Total area: 2,500 km².`;
         if (statusEl) statusEl.textContent = '✅ Sentinel-1 C-band SAR multi-scale coverage complete.';
+        
+        window.lastSarScanCompleted = true;
+        window.lastSarScanData = data;
+        window.lastSarScanFeatures = data.geojson?.features || [];
+        if (typeof updateActionPlanPrerequisitesUI === 'function') updateActionPlanPrerequisitesUI();
+        
+        // Pre-populate Action Plan origin coordinates strictly from detected flood polygons
+        if (window.lastSarScanFeatures.length > 0 && typeof extractSarFloodOrigin === 'function') {
+            const floodPt = extractSarFloodOrigin(window.lastSarScanFeatures);
+            if (floodPt) {
+                const actLatIn = document.getElementById('actionLat');
+                const actLngIn = document.getElementById('actionLng');
+                if (actLatIn) actLatIn.value = floodPt[0].toFixed(4);
+                if (actLngIn) actLngIn.value = floodPt[1].toFixed(4);
+            }
+        }
+        
         toast(`Multi-Scale SAR Scan Complete: 5km → 50km extents verified.`, 'ok');
 
     } catch (err) {
@@ -3802,12 +3828,22 @@ function syncActionCoordsFromMap() {
         toast('Please click on the map or enter coordinates first.', 'err');
         return;
     }
+    const sarFeatures = (window.lastSarScanFeatures && window.lastSarScanFeatures.length > 0)
+        ? window.lastSarScanFeatures
+        : (window.floodwatchSharedContext?.geojson?.features || []);
+    if (sarFeatures && sarFeatures.length > 0 && typeof extractSarFloodOrigin === 'function') {
+        const floodPt = extractSarFloodOrigin(sarFeatures, lat, lng);
+        if (floodPt) {
+            lat = floodPt[0];
+            lng = floodPt[1];
+        }
+    }
     const latIn = document.getElementById('actionLat');
     const lngIn = document.getElementById('actionLng');
     if (latIn) latIn.value = lat.toFixed(4);
     if (lngIn) lngIn.value = lng.toFixed(4);
     setTarget(lat, lng, false);
-    toast(`Action plan coordinates synchronized to [${lat.toFixed(4)}, ${lng.toFixed(4)}]`, 'ok');
+    toast(`Action plan coordinates synchronized to flood area [${lat.toFixed(4)}, ${lng.toFixed(4)}]`, 'ok');
 }
 
 let actionRoutePolylines = [];
@@ -4015,6 +4051,148 @@ function highlightOriginOnMap() {
     }
 }
 
+// ── SAR Flood Polygon & Action Plan Prerequisite Helpers ──
+function isPointInPolygon(point, vs) {
+    const x = point[0], y = point[1];
+    let inside = false;
+    for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+        const xi = vs[i][0], yi = vs[i][1];
+        const xj = vs[j][0], yj = vs[j][1];
+        const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+
+function extractSarFloodOrigin(features, preferredLat, preferredLng) {
+    if (!features || !Array.isArray(features) || features.length === 0) return null;
+    
+    // 1. If preferred coordinate is strictly inside an actual flood polygon, use it directly
+    if (preferredLat != null && preferredLng != null && !isNaN(preferredLat) && !isNaN(preferredLng)) {
+        for (const f of features) {
+            if (!f.geometry || !f.geometry.coordinates) continue;
+            const geom = f.geometry;
+            const rings = geom.type === 'Polygon' ? [geom.coordinates] : (geom.type === 'MultiPolygon' ? geom.coordinates : []);
+            for (const polyCoords of rings) {
+                const ring = polyCoords[0];
+                if (ring && isPointInPolygon([preferredLng, preferredLat], ring)) {
+                    return [preferredLat, preferredLng];
+                }
+            }
+        }
+    }
+    
+    // 2. Otherwise discover primary inundated flood polygon (highest area / extent)
+    let bestPoint = null;
+    let maxArea = -1;
+    
+    for (const f of features) {
+        if (!f.geometry || !f.geometry.coordinates) continue;
+        const geom = f.geometry;
+        const rings = geom.type === 'Polygon' ? [geom.coordinates] : (geom.type === 'MultiPolygon' ? geom.coordinates : []);
+        for (const polyCoords of rings) {
+            const ring = polyCoords[0];
+            if (!ring || ring.length < 3) continue;
+            
+            let sumX = 0, sumY = 0;
+            let approxArea = 0;
+            for (let i = 0; i < ring.length - 1; i++) {
+                approxArea += (ring[i][0] * ring[i+1][1]) - (ring[i+1][0] * ring[i][1]);
+                sumX += ring[i][0];
+                sumY += ring[i][1];
+            }
+            approxArea = Math.abs(approxArea) / 2.0;
+            const reportedArea = f.properties?.area_km2;
+            const weight = reportedArea ? reportedArea : approxArea;
+            
+            let cLng = sumX / (ring.length - 1);
+            let cLat = sumY / (ring.length - 1);
+            
+            // If centroid falls outside convoluted shape, pick guaranteed interior point
+            if (!isPointInPolygon([cLng, cLat], ring)) {
+                cLng = (ring[0][0] + ring[Math.floor(ring.length / 2)][0]) / 2.0;
+                cLat = (ring[0][1] + ring[Math.floor(ring.length / 2)][1]) / 2.0;
+            }
+            
+            if (weight > maxArea) {
+                maxArea = weight;
+                bestPoint = [cLat, cLng];
+            }
+        }
+    }
+    return bestPoint;
+}
+
+function updateActionPlanPrerequisitesUI() {
+    const card = document.getElementById('action-prereq-card');
+    const banner = document.getElementById('action-status-banner');
+    const badge = document.getElementById('action-prog-badge');
+    
+    const sarFeatures = (window.lastSarScanFeatures && window.lastSarScanFeatures.length > 0)
+        ? window.lastSarScanFeatures
+        : (window.floodwatchSharedContext?.geojson?.features || []);
+    
+    const hasSarScan = !!(window.lastSarScanCompleted && sarFeatures && sarFeatures.length > 0);
+    
+    if (!hasSarScan) {
+        if (card) {
+            card.style.display = 'block';
+            card.style.background = 'rgba(239, 68, 68, 0.08)';
+            card.style.border = '1px solid rgba(239, 68, 68, 0.35)';
+            card.innerHTML = `
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-size:16px;">⚠️</span>
+                    <b style="color:#ef4444; font-size:11.5px;">SAR Radar Scan Required</b>
+                </div>
+                <div style="color:var(--text-1); font-size:10.5px; margin-top:4px; line-height:1.45;">
+                    The Action Plan maps emergency routes and safe high-ground staging areas directly from genuine satellite flood detections, avoiding bounding box centroids. Please run the SAR Radar Scan first.
+                </div>
+                <button class="btn btn-primary" onclick="switchTab('live')" style="margin-top:8px; width:100%; font-size:10.5px; padding:5px 10px; background:linear-gradient(135deg, #0284c7 0%, #0369a1 100%); border:none;">
+                    🛰️ Run Sentinel-1 SAR Scan First
+                </button>
+            `;
+        }
+        if (banner) {
+            banner.innerHTML = `<span style="color:#f59e0b;">⚡ Awaiting Sentinel-1 SAR Radar Scan results to identify real flooded sectors.</span>`;
+        }
+        if (badge) {
+            badge.textContent = 'AWAITING SAR';
+            badge.className = 'metric-status-pill warning';
+        }
+    } else {
+        const totalArea = window.lastSarScanData?.summary?.total_area_km2 
+            || window.floodwatchSharedContext?.totalFloodedKm2 
+            || 0;
+        const count = sarFeatures.length;
+        if (card) {
+            card.style.display = 'block';
+            card.style.background = 'rgba(16, 185, 129, 0.08)';
+            card.style.border = '1px solid rgba(16, 185, 129, 0.35)';
+            card.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <span style="font-size:15px;">✅</span>
+                        <b style="color:#10b981; font-size:11.5px;">SAR Radar Scan Active</b>
+                    </div>
+                    <span class="chip" style="font-size:9.5px; background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.3); font-weight:700;">
+                        ${count} FLOOD ZONES · ${typeof totalArea === 'number' ? totalArea.toFixed(2) : totalArea} km²
+                    </span>
+                </div>
+                <div style="color:var(--text-1); font-size:10px; margin-top:4px; line-height:1.4;">
+                    Evacuation origin and corridors will automatically anchor inside the verified red flood inundation sectors, leading to dry high-ground staging areas.
+                </div>
+            `;
+        }
+        if (banner) {
+            banner.innerHTML = `✅ SAR Scan Active: ${count} flooded sectors ready. Evacuation routes mapped from real inundation surfaces.`;
+        }
+        if (badge) {
+            badge.textContent = 'SAR READY';
+            badge.className = 'metric-status-pill available';
+        }
+    }
+}
+
 window.evacuateFromSpecificFloodPoint = function(e, directLat, directLng) {
     if (e && e.stopPropagation) e.stopPropagation();
     let lat = (directLat != null) ? directLat : null;
@@ -4042,25 +4220,20 @@ window.evacuateFromSpecificFloodPoint = function(e, directLat, directLng) {
 
 function launchActionPlanFromSar() {
     switchTab('action');
+    const sarFeatures = (window.lastSarScanFeatures && window.lastSarScanFeatures.length > 0)
+        ? window.lastSarScanFeatures
+        : (window.floodwatchSharedContext?.geojson?.features || []);
+
     let lat = null;
     let lng = null;
     if (window.lastSelectedFloodCoord) {
         lat = window.lastSelectedFloodCoord[0];
         lng = window.lastSelectedFloodCoord[1];
-    } else if (window.floodwatchSharedContext && window.floodwatchSharedContext.geojson && window.floodwatchSharedContext.geojson.features && window.floodwatchSharedContext.geojson.features.length > 0) {
-        for (const feat of window.floodwatchSharedContext.geojson.features) {
-            if (feat.geometry && feat.geometry.coordinates) {
-                const geom = feat.geometry;
-                if (geom.type === 'Polygon' && geom.coordinates[0] && geom.coordinates[0].length > 0) {
-                    lat = geom.coordinates[0][0][1];
-                    lng = geom.coordinates[0][0][0];
-                    break;
-                } else if (geom.type === 'MultiPolygon' && geom.coordinates[0] && geom.coordinates[0][0] && geom.coordinates[0][0].length > 0) {
-                    lat = geom.coordinates[0][0][0][1];
-                    lng = geom.coordinates[0][0][0][0];
-                    break;
-                }
-            }
+    } else if (sarFeatures && sarFeatures.length > 0) {
+        const floodOrigin = extractSarFloodOrigin(sarFeatures);
+        if (floodOrigin) {
+            lat = floodOrigin[0];
+            lng = floodOrigin[1];
         }
     }
     if (lat == null || lng == null) {
@@ -4085,17 +4258,38 @@ function launchActionPlanFromSar() {
 }
 
 async function runMultiScaleActionPlan() {
+    // 0. Enforce prerequisite: Action Plan should only be generated after successfully running SAR Radar Scan
+    let sar_features = null;
+    if (window.lastSarScanFeatures && window.lastSarScanFeatures.length > 0) {
+        sar_features = window.lastSarScanFeatures;
+    } else if (window.floodwatchSharedContext && window.floodwatchSharedContext.geojson && Array.isArray(window.floodwatchSharedContext.geojson.features) && window.floodwatchSharedContext.geojson.features.length > 0) {
+        sar_features = window.floodwatchSharedContext.geojson.features;
+    }
+
+    if (!sar_features || sar_features.length === 0) {
+        toast('SAR Radar Scan required: Please run the SAR Radar Scan first to detect flooded regions before generating the Action Plan.', 'err', 4500);
+        switchTab('live');
+        return;
+    }
+
     let lat = parseFloat(document.getElementById('actionLat')?.value);
     let lng = parseFloat(document.getElementById('actionLng')?.value);
-    if (isNaN(lat) || isNaN(lng)) {
+
+    // Retrieve exact flooded region from SAR scan results rather than relying on map center
+    const floodPt = extractSarFloodOrigin(sar_features, lat, lng);
+    if (floodPt) {
+        lat = floodPt[0];
+        lng = floodPt[1];
+    } else if (isNaN(lat) || isNaN(lng)) {
         if (selectedLat != null && selectedLng != null) {
             lat = selectedLat;
             lng = selectedLng;
         } else {
-            toast('Please click on the map or enter coordinates for action plan.', 'err');
+            toast('Please enter coordinates or run SAR scan for action plan.', 'err');
             return;
         }
     }
+
     const latIn = document.getElementById('actionLat');
     const lngIn = document.getElementById('actionLng');
     if (latIn) latIn.value = lat.toFixed(4);
@@ -4143,10 +4337,11 @@ async function runMultiScaleActionPlan() {
     actionDestinationMarkers = [];
 
     try {
-        let sar_features = null;
-        if (window.floodwatchSharedContext && window.floodwatchSharedContext.geojson && Array.isArray(window.floodwatchSharedContext.geojson.features)) {
-            sar_features = window.floodwatchSharedContext.geojson.features;
-        }
+        let sar_features = (window.lastSarScanFeatures && window.lastSarScanFeatures.length > 0)
+            ? window.lastSarScanFeatures
+            : (window.floodwatchSharedContext && window.floodwatchSharedContext.geojson && Array.isArray(window.floodwatchSharedContext.geojson.features)
+                ? window.floodwatchSharedContext.geojson.features
+                : null);
 
         const res = await fetch('/api/action/multiscale', {
             method: 'POST',
@@ -5970,6 +6165,9 @@ function clearHydrologyLayers() {
 // Initialize prediction layers on map
 if (typeof initPredictLayers === 'function') {
     initPredictLayers();
+}
+if (typeof updateActionPlanPrerequisitesUI === 'function') {
+    updateActionPlanPrerequisitesUI();
 }
 
 // Support initial tab selection via query parameter (e.g. ?tab=impact&run=impact)

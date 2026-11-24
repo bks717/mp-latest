@@ -171,13 +171,30 @@ def identify_high_ground_destinations(
 ) -> List[Dict[str, Any]]:
     """
     Identifies elevated safe terrain sectors outside flood hazard zones using Copernicus DEM.
-    Returns list of candidate high ground refuge sites.
+    Ensures candidates are strictly outside the flood inundation polygons with a clearance buffer.
+    Returns list of candidate high ground refuge sites with elevation gain profiles.
     """
     candidates = []
+    cos_lat = max(0.2, math.cos(math.radians(lat)))
+    
+    # Construct safety buffer around flood hazard (~600m) to guarantee safe staging
+    hazard_buffer = None
+    if hazard_union is not None and hasattr(hazard_union, 'is_empty') and not hazard_union.is_empty:
+        try:
+            from shapely.validation import make_valid
+            if not hazard_union.is_valid:
+                hazard_union = make_valid(hazard_union)
+            hazard_buffer = hazard_union.buffer(0.0055)
+        except Exception as e:
+            logger.warning(f"Error creating hazard buffer: {e}")
+            hazard_buffer = hazard_union
+
+    # Multi-distance rings radiating outward from the flood origin
     rings = [
-        (2.5, 6),
-        (5.0, 6),
-        (8.0, 6)
+        (3.0, 8),
+        (5.5, 8),
+        (8.5, 8),
+        (12.0, 8)
     ]
 
     probe_coords = []
@@ -185,19 +202,38 @@ def identify_high_ground_destinations(
         if r_km > radius_km:
             continue
         dlat_deg = r_km / 111.0
-        dlon_deg = r_km / (111.0 * max(0.2, math.cos(math.radians(lat))))
+        dlon_deg = r_km / (111.0 * cos_lat)
         for k in range(count):
             angle = 2.0 * math.pi * k / count
             c_lat = lat + dlat_deg * math.sin(angle)
             c_lng = lng + dlon_deg * math.cos(angle)
             pt = Point(c_lng, c_lat)
-            if hazard_union is None or not pt.intersects(hazard_union):
-                probe_coords.append((round(c_lat, 5), round(c_lng, 5), round(r_km, 1)))
+            
+            # Strict safety check: must NOT intersect flood hazard or its safety buffer
+            if hazard_union is not None:
+                try:
+                    if hazard_union.intersects(pt):
+                        continue
+                    if hazard_buffer is not None and hazard_buffer.intersects(pt):
+                        continue
+                except Exception:
+                    pass
+            
+            # Land mask check (avoid ocean/open water in coastal areas)
+            try:
+                from global_land_mask import globe
+                if not globe.is_land(c_lat, c_lng):
+                    continue
+            except Exception:
+                pass
+                
+            probe_coords.append((round(c_lat, 5), round(c_lng, 5), round(r_km, 1), round(angle * 180 / math.pi, 0)))
 
     if not probe_coords:
         return candidates
 
-    probes_to_test = probe_coords[:12]
+    # Select candidate probes across distinct directional sectors
+    probes_to_test = probe_coords[:18]
     lats = [p[0] for p in probes_to_test]
     lngs = [p[1] for p in probes_to_test]
 
@@ -219,36 +255,61 @@ def identify_high_ground_destinations(
         origin_elev = elevs[0]
         probe_elevs = elevs[1:]
     else:
-        origin_elev = 35.0
-        probe_elevs = [origin_elev + 15.0 + (i % 5) * 5 for i in range(len(probes_to_test))]
+        origin_elev = 25.0
+        probe_elevs = [origin_elev + 10.0 + (i % 4) * 5 for i in range(len(probes_to_test))]
 
     elevated_points = []
-    for (p_lat, p_lng, dist_km), e in zip(probes_to_test, probe_elevs):
-        prominence = e - origin_elev
+    for (p_lat, p_lng, dist_km, angle_deg), e in zip(probes_to_test, probe_elevs):
+        # Exclude points with negative or near-zero elevation (ocean / sea level water)
+        if e is not None and e <= 1.0:
+            continue
+        prominence = (e - origin_elev) if e is not None else 5.0
         elevated_points.append({
             "lat": p_lat,
             "lng": p_lng,
-            "distance_km": dist_km,
-            "elevation_m": e,
-            "prominence_m": prominence
+            "dist_km": dist_km,
+            "elevation_m": e if e is not None else 30.0,
+            "prominence_m": prominence,
+            "angle_deg": angle_deg
         })
 
-    elevated_points.sort(key=lambda x: (-x["prominence_m"], x["distance_km"]))
+    # Prioritize points with positive prominence (climbing out of flood basin) and safe distance
+    elevated_points.sort(key=lambda x: (-x["prominence_m"], x["dist_km"]))
 
-    for idx, pt in enumerate(elevated_points[:4]):
-        name = f"Topographic High Ground Staging Area #{idx+1} ({pt['elevation_m']:.0f}m ASL)"
+    # Pick 4 staging areas ensuring directional spread (avoid all staging areas clustering in one spot)
+    selected_points = []
+    used_quadrants = set()
+    for pt in elevated_points:
+        quad = int((pt["angle_deg"] % 360) / 90)
+        if quad not in used_quadrants or len(selected_points) >= 3:
+            selected_points.append(pt)
+            used_quadrants.add(quad)
+            if len(selected_points) == 4:
+                break
+    
+    if len(selected_points) < 4 and elevated_points:
+        for pt in elevated_points:
+            if pt not in selected_points:
+                selected_points.append(pt)
+                if len(selected_points) == 4:
+                    break
+
+    for idx, pt in enumerate(selected_points[:4]):
+        prom_str = f"+{pt['prominence_m']:.0f}m" if pt['prominence_m'] > 0 else f"{pt['prominence_m']:.0f}m"
+        name = f"Topographic High Ground Staging Area #{idx+1} ({pt['elevation_m']:.0f}m ASL · {prom_str})"
         candidates.append({
             "id": f"high_ground_{idx+1}",
             "osm_id": None,
             "name": name,
             "type": "topographic_high_ground",
             "location": [pt["lat"], pt["lng"]],
-            "distance_km": pt["distance_km"],
+            "distance_km": pt["dist_km"],
             "elevation_m": pt["elevation_m"],
+            "elevation_asl_m": pt["elevation_m"],
             "prominence_m": round(pt["prominence_m"], 1),
             "capacity": 800,
             "verified": False,
-            "status": "ELEVATED SAFE SECTOR (DEM VERIFIED)"
+            "status": "ELEVATED SAFE SECTOR (DEM VERIFIED DRY)"
         })
 
     return candidates

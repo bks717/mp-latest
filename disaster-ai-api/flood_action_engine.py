@@ -93,11 +93,9 @@ class FloodActionEngine:
         stage_mult = max(0.6, flow_ratio)
         risk_level = "Critical" if prob > 0.65 else ("High" if prob > 0.45 else ("Medium" if prob > 0.25 else "Normal"))
 
-        hazard_zones, zone_summary = self.hazard_generator._delineate_flood_zones(
-            lat, lng, bbox, elements, prob, stage_mult, risk_level
-        )
-        if sar_features and isinstance(sar_features, list):
-            logger.info(f"Incorporating {len(sar_features)} Sentinel-1 SAR flood inundation polygons into hazard set...")
+        if sar_features and isinstance(sar_features, list) and len(sar_features) > 0:
+            logger.info(f"Incorporating {len(sar_features)} Sentinel-1 SAR flood inundation polygons as authentic hazard zones...")
+            hazard_zones = {"type": "FeatureCollection", "features": []}
             for sf in sar_features:
                 if sf and isinstance(sf, dict) and "geometry" in sf:
                     props = dict(sf.get("properties") or {})
@@ -105,14 +103,23 @@ class FloodActionEngine:
                     props.setdefault("severity", "Critical")
                     props.setdefault("stroke_color", "#ef4444")
                     props.setdefault("fill_color", "#ef4444")
-                    props.setdefault("fill_opacity", 0.38)
+                    props.setdefault("fill_opacity", 0.40)
                     props.setdefault("source", "ESA_SENTINEL1_SAR_UNET")
                     hazard_zones["features"].append({
                         "type": "Feature",
                         "geometry": sf["geometry"],
                         "properties": props
                     })
-            zone_summary["sar_features_count"] = len(sar_features)
+            zone_summary = {
+                "sar_features_count": len(sar_features),
+                "total_zones": len(hazard_zones["features"]),
+                "dominant_risk_level": "Critical",
+                "flood_source": "ESA_SENTINEL1_SAR_UNET"
+            }
+        else:
+            hazard_zones, zone_summary = self.hazard_generator._delineate_flood_zones(
+                lat, lng, bbox, elements, prob, stage_mult, risk_level
+            )
         road_analysis = self.hazard_generator._analyze_affected_roads(elements, hazard_zones)
 
         return {
@@ -137,24 +144,33 @@ class FloodActionEngine:
     ) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
         """
         Combines flood hazard polygons into a unified Shapely geometry.
+        Validates topologies using make_valid to repair complex vectorized geometries.
         Accounts for time-dependent flood expansion if horizon > 0.
         """
+        from shapely.validation import make_valid
         hazard_zones = assessment.get("hazard_zones", {})
         features = list(hazard_zones.get("features", []))
 
         valid_geoms = []
         for f in features:
             try:
-                s = shape(f["geometry"])
-                if s.is_valid and not s.is_empty:
+                geom = f.get("geometry")
+                if not geom:
+                    continue
+                s = shape(geom)
+                if not s.is_valid:
+                    s = make_valid(s)
+                if not s.is_empty:
                     valid_geoms.append(s)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Error validating hazard geometry: {e}")
 
         if not valid_geoms:
             return None, features
 
         hazard_union = unary_union(valid_geoms)
+        if not hazard_union.is_valid:
+            hazard_union = make_valid(hazard_union)
 
         # Time-dependent expansion: if horizon > 0, buffer based on forecast accumulation
         if time_horizon_hours > 0 and hazard_union is not None:
@@ -184,113 +200,120 @@ class FloodActionEngine:
         target_lng: float,
         hazard_union,
         hazard_features: List[Dict[str, Any]],
-        search_radius_km: float = 35.0
+        search_radius_km: float = 35.0,
+        sar_features: Optional[List[Dict[str, Any]]] = None
     ) -> Tuple[float, float, Dict[str, Any], List[Dict[str, Any]]]:
         """
         Extracts genuine evacuation origin point(s) from inside the actual red flood hazard polygons.
-        - If target_lat, target_lng is already inside a flooded polygon, preserves it.
-        - Otherwise, discovers the primary inundated flood polygon(s) from Sentinel-1 SAR / hazard set,
-          using a representative point strictly INSIDE the flooded geometry.
+        - If target_lat, target_lng is strictly inside an actual SAR flood polygon, preserves it.
+        - Otherwise, discovers the primary inundated flood polygon(s) from Sentinel-1 SAR,
+          using a representative point strictly INSIDE the flooded geometry (never the boundary centroid).
         """
+        from shapely.validation import make_valid
         target_pt = Point(target_lng, target_lat)
-        is_target_flooded = False
-
-        if hazard_union is not None:
-            try:
-                # Check if target is inside or within 250m of flood hazard
-                if hazard_union.contains(target_pt) or hazard_union.distance(target_pt) < 0.0022:
-                    is_target_flooded = True
-            except Exception as e:
-                logger.warning(f"Error checking if target is flooded: {e}")
-
-        # If user explicitly clicked or targeted a point inside the flood zone:
-        if is_target_flooded:
-            info = {
-                "zone_name": "Target Inundated Location (SAR Flood Zone)",
-                "is_inside_flood": True,
-                "location": [round(target_lat, 5), round(target_lng, 5)],
-                "selection_method": "DIRECT_FLOOD_TARGET",
-                "area_km2": 0.0
-            }
-            return target_lat, target_lng, info, [info]
-
-        # Target is outside the flood polygons (e.g. bbox center in dry terrain).
-        # Discover the actual flooded polygons (the red areas on the map)
         cos_lat = max(0.2, math.cos(math.radians(target_lat)))
-        flood_candidates = []
 
-        for idx, f in enumerate(hazard_features):
+        # 1. Parse all actual flood candidate polygons
+        flood_candidates = []
+        source_feats = sar_features if (sar_features and len(sar_features) > 0) else hazard_features
+
+        for idx, f in enumerate(source_feats):
             geom = f.get("geometry", {})
             if not geom:
                 continue
             try:
                 s = shape(geom)
-                if not s.is_valid or s.is_empty:
+                if not s.is_valid:
+                    s = make_valid(s)
+                if s.is_empty:
                     continue
-                polys = s.geoms if s.geom_type == 'MultiPolygon' else [s]
+                polys = s.geoms if s.geom_type in ['MultiPolygon', 'GeometryCollection'] else [s]
                 for p in polys:
-                    if p.is_empty:
+                    if p.geom_type != 'Polygon' or p.is_empty:
                         continue
                     area_km2 = p.area * 111.0 * (111.0 * cos_lat)
-                    if area_km2 < 0.002: # filter sub-acre noise
+                    if area_km2 < 0.001:  # Filter micro-noise < 1,000 m²
                         continue
-                    c = p.centroid
-                    dist_km = math.sqrt(((c.y - target_lat) * 111.0)**2 + ((c.x - target_lng) * 111.0 * cos_lat)**2)
-                    if dist_km > search_radius_km:
-                        continue
-
+                    
                     # Representative point is mathematically guaranteed to be strictly INSIDE the polygon interior
                     rep_pt = p.representative_point()
+                    
+                    # Center: use centroid if inside, otherwise representative point
+                    c = p.centroid if p.contains(p.centroid) else rep_pt
+                    dist_km = math.hypot((c.y - target_lat) * 111.0, (c.x - target_lng) * 111.0 * cos_lat)
+                    
                     flood_candidates.append({
                         "poly": p,
                         "area_km2": area_km2,
                         "dist_km": dist_km,
                         "rep_lat": rep_pt.y,
                         "rep_lng": rep_pt.x,
-                        "severity": f.get("properties", {}).get("severity", "CRITICAL"),
-                        "zone_type": f.get("properties", {}).get("zone_type", "Flood Inundation Extent")
+                        "center_lat": c.y,
+                        "center_lng": c.x,
+                        "severity": f.get("properties", {}).get("severity") or f.get("properties", {}).get("danger_level", "Critical"),
+                        "zone_type": f.get("properties", {}).get("zone_type", "Sentinel-1 SAR Inundated Surface")
                     })
             except Exception as e:
                 continue
 
-        if not flood_candidates:
-            # No flood polygons found in area - fallback to target coords
-            info = {
-                "zone_name": "Target Coordinates (Dry Surface Baseline)",
-                "is_inside_flood": False,
-                "location": [round(target_lat, 5), round(target_lng, 5)],
-                "selection_method": "BASELINE_TARGET",
-                "area_km2": 0.0
+        # 2. Check if user explicitly targeted a point inside an actual flood polygon
+        if flood_candidates and hazard_union is not None:
+            try:
+                if hazard_union.contains(target_pt):
+                    # Target is strictly inside an actual flood polygon!
+                    matching_poly = [fc for fc in flood_candidates if fc["poly"].contains(target_pt)]
+                    matching_area = matching_poly[0]["area_km2"] if matching_poly else 0.0
+                    info = {
+                        "zone_name": f"Target Inundated Location ({matching_area:.2f} km² SAR Flood Zone)",
+                        "is_inside_flood": True,
+                        "location": [round(target_lat, 5), round(target_lng, 5)],
+                        "selection_method": "DIRECT_FLOOD_TARGET",
+                        "area_km2": round(matching_area, 2)
+                    }
+                    return target_lat, target_lng, info, [info]
+            except Exception as e:
+                logger.warning(f"Error checking if target point is in hazard union: {e}")
+
+        # 3. If target is outside flood polygons (e.g. centroid of map area or clicked dry area):
+        # We MUST select the flood origin from the actual flooded polygons!
+        if flood_candidates:
+            # Sort candidates: prioritize significant inundated area within reasonable proximity to scan area
+            flood_candidates.sort(key=lambda x: -(x["area_km2"] / max(1.0, math.sqrt(x["dist_km"]))))
+
+            primary = flood_candidates[0]
+            primary_lat = round(primary["center_lat"], 5)
+            primary_lng = round(primary["center_lng"], 5)
+
+            primary_info = {
+                "zone_name": f"Primary Flood Inundation Sector ({primary['area_km2']:.2f} km²)",
+                "is_inside_flood": True,
+                "location": [primary_lat, primary_lng],
+                "area_km2": round(primary["area_km2"], 2),
+                "distance_from_scan_center_km": round(primary["dist_km"], 2),
+                "selection_method": "SAR_PRIMARY_INUNDATION_ZONE"
             }
-            return target_lat, target_lng, info, []
 
-        # Sort candidate flood sectors: prioritize significant inundated area within reasonable proximity
-        flood_candidates.sort(key=lambda x: -(x["area_km2"] / max(1.0, math.sqrt(x["dist_km"]))))
+            all_flood_origins = []
+            for i, fc in enumerate(flood_candidates[:5]):
+                all_flood_origins.append({
+                    "id": f"flood_sector_{i+1}",
+                    "name": f"Flood Sector #{i+1} ({fc['area_km2']:.2f} km²)",
+                    "location": [round(fc["center_lat"], 5), round(fc["center_lng"], 5)],
+                    "area_km2": round(fc["area_km2"], 2),
+                    "distance_km": round(fc["dist_km"], 2)
+                })
 
-        primary = flood_candidates[0]
-        primary_lat = round(primary["rep_lat"], 5)
-        primary_lng = round(primary["rep_lng"], 5)
+            return primary_lat, primary_lng, primary_info, all_flood_origins
 
-        primary_info = {
-            "zone_name": f"Primary Flood Inundation Sector ({primary['area_km2']:.2f} km²)",
-            "is_inside_flood": True,
-            "location": [primary_lat, primary_lng],
-            "area_km2": round(primary["area_km2"], 2),
-            "distance_from_scan_center_km": round(primary["dist_km"], 2),
-            "selection_method": "AUTO_PRIMARY_INUNDATION_CLUSTER"
+        # Fallback if no flood candidates exist
+        info = {
+            "zone_name": "Target Coordinates (Baseline)",
+            "is_inside_flood": False,
+            "location": [round(target_lat, 5), round(target_lng, 5)],
+            "selection_method": "BASELINE_TARGET",
+            "area_km2": 0.0
         }
-
-        all_flood_origins = []
-        for i, fc in enumerate(flood_candidates[:5]):
-            all_flood_origins.append({
-                "id": f"flood_sector_{i+1}",
-                "name": f"Flood Sector #{i+1} ({fc['area_km2']:.2f} km²)",
-                "location": [round(fc["rep_lat"], 5), round(fc["rep_lng"], 5)],
-                "area_km2": round(fc["area_km2"], 2),
-                "distance_km": round(fc["dist_km"], 2)
-            })
-
-        return primary_lat, primary_lng, primary_info, all_flood_origins
+        return target_lat, target_lng, info, []
 
     def _discover_shelters(
         self,
@@ -304,9 +327,22 @@ class FloodActionEngine:
         Progressive search for safe emergency shelters outside flood zones.
         Searches OSM civic facilities (hospitals, schools, community centers).
         If rural or unmapped, identifies genuine elevated safe terrain sectors using Copernicus DEM.
+        Enforces safety clearance buffer from all flood polygons.
         """
         shelters = []
         seen_coords = set()
+
+        # Construct safety clearance buffer (~600m) to guarantee shelters are dry
+        hazard_buffer = None
+        if hazard_union is not None and hasattr(hazard_union, 'is_empty') and not hazard_union.is_empty:
+            try:
+                from shapely.validation import make_valid
+                if not hazard_union.is_valid:
+                    hazard_union = make_valid(hazard_union)
+                hazard_buffer = hazard_union.buffer(0.0055)
+            except Exception as e:
+                logger.warning(f"Error creating hazard buffer: {e}")
+                hazard_buffer = hazard_union
 
         for el in elements:
             tags = el.get("tags", {})
@@ -332,6 +368,8 @@ class FloodActionEngine:
 
             pt = Point(s_lng, s_lat)
             if hazard_union and hazard_union.contains(pt):
+                continue
+            if hazard_buffer and hazard_buffer.contains(pt):
                 continue
 
             dist_km = math.sqrt(((s_lat - lat) * 111.0)**2 + ((s_lng - lng) * 111.0 * math.cos(math.radians(lat)))**2)
@@ -680,7 +718,7 @@ class FloodActionEngine:
 
         # 2b. Extract genuine evacuation origin from inside the RED FLOODED POLYGONS
         origin_lat, origin_lng, flood_origin_info, all_flood_origins = self._extract_flood_origin(
-            lat, lng, hazard_union, hazard_features, search_radius_km=radius_km * 3.0
+            lat, lng, hazard_union, hazard_features, search_radius_km=radius_km * 3.0, sar_features=sar_features
         )
         logger.info(f"Evacuation Origin: [{origin_lat:.5f}, {origin_lng:.5f}] in {flood_origin_info.get('zone_name')} (is_inside_flood={flood_origin_info.get('is_inside_flood')})")
 

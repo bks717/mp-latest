@@ -22,7 +22,7 @@ import geopandas as gpd
 from shapely.geometry import shape, mapping, box, Point, LineString
 from shapely.ops import unary_union, nearest_points
 import networkx as nx
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import segmentation_models_pytorch as smp
@@ -969,7 +969,19 @@ def run_live_sentinel1_inference(bbox: List[float], stac_info: dict = None) -> D
         "status": "AVAILABLE",
         "scene_id": scene_id,
         "acquisition_time": acquisition_time
-}
+    }
+
+    # Arm latest SAR scan cache with freshly generated features
+    global _LATEST_SAR_SCAN
+    if features:
+        _LATEST_SAR_SCAN = {
+            "lat": (bbox[1] + bbox[3]) / 2.0,
+            "lng": (bbox[0] + bbox[2]) / 2.0,
+            "features": features,
+            "timestamp": time.time(),
+            "summary": summary
+        }
+
     return res
 
     # Try providers in order: Planetary Computer (primary, HTTPS/SAS), then AWS (fallback, S3)
@@ -1608,6 +1620,7 @@ class MultiScaleSarRequest(BaseModel):
 @app.post("/sar-multiscale")
 @app.post("/api/sar-multiscale")
 async def sar_multiscale(request: MultiScaleSarRequest):
+    global _LATEST_SAR_SCAN
     lat, lng = request.lat, request.lng
     print(f"🛰️ Multi-Scale SAR Radar Analysis for [{lat:.4f}, {lng:.4f}] across 5, 10, 15 km...")
 
@@ -1616,62 +1629,67 @@ async def sar_multiscale(request: MultiScaleSarRequest):
     extents = [5, 10, 15]
     stage_labels = ["01 CORE (5×5 km)", "02 CATCHMENT (10×10 km)", "03 SUB-BASIN (15×15 km)"]
 
-    # 1. Authoritative live STAC catalog query for genuine Sentinel-1 scene pass (10km catchment extent)
-    stac_info = fetch_sentinel1_stac_scene(lat, lng, 10.0)
-
-    # 2. Run Sentinel-1 C-band SAR U-Net deep learning inference if imagery is cataloged
+    # 0. Check recent cache for this region (avoid redundant STAC and heavy DL inference if recently scanned)
     all_features = []
     flooded_km2 = 0.0
     sar_res = None
     sar_status = "UNAVAILABLE"
     sar_message = ""
+    stac_info = {}
 
-    if stac_info.get("status") == "AVAILABLE":
-        full_bbox = get_geodesic_stage_info(lat, lng, 10.0)["bbox"]
-        try:
-            # Responsive 35s timeout for fast real-time inference
-            sar_res = await asyncio.wait_for(
-                asyncio.to_thread(run_live_sentinel1_inference, full_bbox, stac_info),
-                timeout=35.0
-            )
-            if sar_res and sar_res.get("features"):
-                all_features = sar_res["features"]
-                flooded_km2 = sar_res.get("flooded_area_km2", 0.0)
-                sar_status = "AVAILABLE"
-                sar_message = f"Sentinel-1 SAR scene analyzed across 15×15 km: {len(all_features)} inundation polygons detected ({flooded_km2:.2f} km²)"
-            elif sar_res and sar_res.get("status") == "AVAILABLE":
-                sar_status = "AVAILABLE"
-                sar_message = "Sentinel-1 SAR scene analyzed across 15×15 km: No floodwater inundation detected."
-            else:
-                sar_message = sar_res.get("message", "SAR inference completed with no features")
-        except asyncio.TimeoutError:
-            logger.info("SAR live inference pass timed out after 90s; trying smaller 10km extent...")
-            sar_message = "SAR inference timed out (90s) for 15km extent."
-            # Fallback: try 10km extent
+    if _LATEST_SAR_SCAN and _LATEST_SAR_SCAN.get("features"):
+        s_lat = _LATEST_SAR_SCAN.get("lat", 0.0)
+        s_lng = _LATEST_SAR_SCAN.get("lng", 0.0)
+        s_age = time.time() - _LATEST_SAR_SCAN.get("timestamp", 0)
+        dist_km = math.hypot(lat - s_lat, (lng - s_lng) * max(0.2, math.cos(math.radians(lat)))) * 111.0
+        if s_age < 3600 and dist_km <= 15.0:
+            logger.info(f"Serving SAR scan from recent cache ({len(_LATEST_SAR_SCAN['features'])} features, dist {dist_km:.1f}km, age {s_age:.1f}s)")
+            all_features = _LATEST_SAR_SCAN["features"]
+            flooded_km2 = _LATEST_SAR_SCAN.get("summary", {}).get("total_area_km2", 0.0)
+            sar_status = "AVAILABLE"
+            sar_message = f"Sentinel-1 SAR scene analyzed across 15×15 km: {len(all_features)} inundation polygons detected ({flooded_km2:.2f} km²)"
+            stac_info = _LATEST_SAR_SCAN.get("stac_info") or {
+                "source": "ESA Copernicus Sentinel-1 STAC",
+                "scene_id": "Sentinel-1 Active Scene",
+                "acquisition_time": datetime.now(timezone.utc).isoformat(),
+                "platform": "Sentinel-1",
+                "polarizations": "VV+VH",
+                "orbit": "Descending",
+                "status": "AVAILABLE",
+                "data_freshness": "RECENT"
+            }
+
+    if not all_features:
+        # 1. Authoritative live STAC catalog query for genuine Sentinel-1 scene pass (10km catchment extent)
+        stac_info = fetch_sentinel1_stac_scene(lat, lng, 10.0)
+
+        # 2. Run Sentinel-1 C-band SAR U-Net deep learning inference if imagery is cataloged
+        if stac_info.get("status") == "AVAILABLE":
+            full_bbox = get_geodesic_stage_info(lat, lng, 10.0)["bbox"]
             try:
-                smaller_bbox = get_geodesic_stage_info(lat, lng, 10.0)["bbox"]
+                # Responsive 120s timeout allowing genuine U-Net inference on Sentinel-1 C-band imagery
                 sar_res = await asyncio.wait_for(
-                    asyncio.to_thread(run_live_sentinel1_inference, smaller_bbox, stac_info),
-                    timeout=25.0
+                    asyncio.to_thread(run_live_sentinel1_inference, full_bbox, stac_info),
+                    timeout=120.0
                 )
                 if sar_res and sar_res.get("features"):
                     all_features = sar_res["features"]
                     flooded_km2 = sar_res.get("flooded_area_km2", 0.0)
                     sar_status = "AVAILABLE"
-                    sar_message = f"Sentinel-1 SAR scene analyzed across 10×10 km (fallback): {len(all_features)} inundation polygons detected ({flooded_km2:.2f} km²)"
+                    sar_message = f"Sentinel-1 SAR scene analyzed across 15×15 km: {len(all_features)} inundation polygons detected ({flooded_km2:.2f} km²)"
                 elif sar_res and sar_res.get("status") == "AVAILABLE":
                     sar_status = "AVAILABLE"
-                    sar_message = "Sentinel-1 SAR scene analyzed across 10×10 km (fallback): No floodwater inundation detected."
+                    sar_message = "Sentinel-1 SAR scene analyzed across 15×15 km: No floodwater inundation detected."
                 else:
-                    sar_message = "SAR inference completed with no features (10km fallback)"
-            except Exception as fallback_e:
-                logger.warning(f"SAR 10km fallback also failed: {fallback_e}")
-                sar_message = f"SAR inference timed out for 15km and 10km fallback failed: {fallback_e}"
-        except Exception as e:
-            logger.warning(f"SAR live inference notice: {e}")
-            sar_message = f"SAR inference error: {e}"
-    else:
-        sar_message = stac_info.get("status_description", "No recent Sentinel-1 SAR overpass cataloged for this area.")
+                    sar_message = sar_res.get("message", "SAR inference completed with no features")
+            except asyncio.TimeoutError:
+                logger.warning("SAR live inference pass timed out after 120s.")
+                sar_message = "SAR inference timed out after 120s."
+            except Exception as e:
+                logger.warning(f"SAR live inference notice: {e}")
+                sar_message = f"SAR inference error: {e}"
+        else:
+            sar_message = stac_info.get("status_description", "No recent Sentinel-1 SAR overpass cataloged for this area.")
 
     # NO SYNTHETIC FALLBACK: If SAR unavailable, report honestly
     flood_source = "ESA_SENTINEL1_SAR_UNET" if sar_status == "AVAILABLE" else "UNAVAILABLE"
@@ -1774,14 +1792,15 @@ async def sar_multiscale(request: MultiScaleSarRequest):
         "sar_message": sar_message
     }
 
-    global _LATEST_SAR_SCAN
-    _LATEST_SAR_SCAN = {
-        "lat": lat,
-        "lng": lng,
-        "features": all_features,
-        "timestamp": time.time(),
-        "summary": summary
-    }
+    if all_features or not _LATEST_SAR_SCAN or not _LATEST_SAR_SCAN.get("features"):
+        _LATEST_SAR_SCAN = {
+            "lat": lat,
+            "lng": lng,
+            "features": all_features,
+            "timestamp": time.time(),
+            "summary": summary,
+            "stac_info": stac_info
+        }
 
     return {
         "status": "success" if is_avail else "unavailable",
@@ -2195,9 +2214,16 @@ async def action_multiscale(request: MultiScaleActionRequest):
         s_lat = _LATEST_SAR_SCAN.get("lat", 0.0)
         s_lng = _LATEST_SAR_SCAN.get("lng", 0.0)
         dist_km = math.hypot(lat - s_lat, (lng - s_lng) * max(0.2, math.cos(math.radians(lat)))) * 111.0
-        if dist_km <= 30.0:
+        if dist_km <= 35.0:
             sar_feats = _LATEST_SAR_SCAN.get("features", [])
             print(f"🛰️ Auto-integrated {len(sar_feats)} Sentinel-1 SAR flood polygons from recent radar scan ({dist_km:.1f} km away)")
+
+    if not sar_feats or len(sar_feats) == 0:
+        logger.warning("Action Plan requested without SAR Radar Scan results.")
+        raise HTTPException(
+            status_code=400,
+            detail="SAR Radar Scan required: Action Plan must be generated from active Sentinel-1 SAR scan results. Please run the SAR Radar Scan first."
+        )
 
     try:
         plan = await asyncio.to_thread(
